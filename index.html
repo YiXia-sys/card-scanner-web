@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>名片扫描助手</title>
+<style>
+:root{--primary:#4f46e5;--primary-light:#eef2ff;--danger:#ef4444;--success:#22c55e;--warn:#f59e0b;--bg:#f8fafc;--card:#fff;--border:#e2e8f0;--text:#1e293b;--text2:#64748b;--radius:12px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:22px;text-align:center;padding:16px 0 8px;display:flex;align-items:center;justify-content:center;gap:8px}
+.card{background:var(--card);border-radius:var(--radius);padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.card-title{font-size:14px;font-weight:600;margin-bottom:10px;color:var(--text2)}
+.banner{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-radius:var(--radius);padding:20px;margin-bottom:16px;text-align:center}
+.banner h2{font-size:18px;margin-bottom:6px}
+.banner p{font-size:13px;opacity:.85}
+label{display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--text2)}
+input[type=text],input[type=password],select,textarea{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;outline:none;transition:border .2s}
+input:focus,select:focus{border-color:var(--primary)}
+.row{display:flex;gap:8px;align-items:flex-end}
+.row>*:first-child{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:#4338ca}
+.btn-primary:disabled{background:#a5b4fc;cursor:not-allowed}
+.btn-outline{background:#fff;color:var(--primary);border:1.5px solid var(--primary)}
+.btn-outline:hover{background:var(--primary-light)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.btn-block{width:100%}
+.btn-lg{padding:14px 24px;font-size:16px}
+.status-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chip{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500}
+.chip-ok{background:#dcfce7;color:#166534}
+.chip-warn{background:#fef3c7;color:#92400e}
+.chip-err{background:#fee2e2;color:#991b1b}
+.chip-info{background:#e0e7ff;color:#3730a3}
+.progress-bar{width:100%;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-bar-inner{height:100%;background:var(--primary);transition:width .3s}
+.upload-area{border:2px dashed var(--border);border-radius:var(--radius);padding:32px;text-align:center;cursor:pointer;transition:border .2s}
+.upload-area:hover{border-color:var(--primary)}
+.upload-area.dragging{border-color:var(--primary);background:var(--primary-light)}
+.upload-area p{color:var(--text2);font-size:14px;margin-top:8px}
+.upload-area .icon{font-size:40px}
+.task-item{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px}
+.task-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.task-status{font-size:12px;font-weight:600}
+.task-details{margin-top:6px}
+.task-details summary{font-size:12px;color:var(--primary);cursor:pointer;user-select:none;padding:4px 0;font-weight:500}
+.task-details summary:hover{text-decoration:underline}
+.task-cards{overflow-x:auto;margin-top:6px}
+.task-cards table{width:100%;border-collapse:collapse;font-size:12px;min-width:500px}
+.task-cards th,.task-cards td{padding:6px 8px;border:1px solid var(--border);text-align:left;white-space:nowrap}
+.task-cards th{background:var(--primary-light);font-weight:600}
+.task-error{color:var(--danger);font-size:12px;margin-top:6px;word-break:break-all}
+.hidden{display:none!important}
+.tabs{display:flex;gap:4px;margin-bottom:12px}
+.tab{padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:#f1f5f9;color:var(--text2)}
+.tab.active{background:var(--primary);color:#fff}
+.settings-toggle{text-align:right;margin-bottom:8px}
+.settings-toggle a{font-size:13px;color:var(--primary);cursor:pointer;text-decoration:none}
+.fade-in{animation:fadeIn .3s ease-in}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:14px;color:#fff;z-index:9999;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast-ok{background:#22c55e}
+.toast-err{background:#ef4444}
+.toast-info{background:#6366f1}
+.flex-center{display:flex;align-items:center;gap:8px}
+@media(max-width:480px){.container{padding:10px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📇 名片扫描助手</h1>
+
+  <!-- Banner -->
+  <div class="banner">
+    <h2>高效录入名片</h2>
+    <p>拍照/上传 → AI 识别 → 自动写入飞书多维表</p>
+  </div>
+
+  <!-- Status -->
+  <div class="card" id="statusCard">
+    <div class="status-bar" id="statusBar"></div>
+  </div>
+
+  <!-- Settings Toggle -->
+  <div class="settings-toggle">
+    <a onclick="toggleSettings()">⚙️ 配置设置</a>
+  </div>
+
+  <!-- Settings Panel -->
+  <div class="card hidden" id="settingsPanel">
+    <div class="card-title">飞书多维表配置</div>
+    <div style="margin-bottom:12px">
+      <label>多维表链接</label>
+      <div class="row">
+        <input type="text" id="bitableUrl" placeholder="https://...feishu.cn/base/...">
+        <button class="btn btn-outline btn-sm" onclick="parseBitableUrl()">解析</button>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">
+        App Token: <span id="dispAppToken">未配置</span> &nbsp;|&nbsp; Table ID: <span id="dispTableId">未配置</span>
+      </div>
+    </div>
+    <div style="margin-bottom:8px">
+      <button class="btn btn-outline btn-sm" onclick="initBitableTable()">初始化名片表格</button>
+    </div>
+  </div>
+
+  <!-- Upload Area -->
+  <div class="card">
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+      <div class="icon">📸</div>
+      <p>点击上传名片照片，或拖拽到此处</p>
+      <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，手机可直接拍照</p>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" capture="environment" multiple class="hidden" onchange="handleFiles(this.files)">
+    <div style="margin-top:8px;text-align:center">
+      <button class="btn btn-primary btn-lg btn-block" onclick="document.getElementById('fileInput').click()">
+        📷 拍照 / 选择图片
+      </button>
+    </div>
+  </div>
+
+  <!-- Queue Stats -->
+  <div class="card" id="queueCard">
+    <div class="card-title">识别队列</div>
+    <div class="progress-bar"><div class="progress-bar-inner" id="progressBar" style="width:0%"></div></div>
+    <div style="font-size:13px;color:var(--text2)" id="queueStats">当前无任务</div>
+  </div>
+
+  <!-- Task List -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-title" style="margin:0">识别结果</div>
+      <button class="btn btn-danger btn-sm" onclick="clearTasks()">清空</button>
+    </div>
+    <div class="tabs" id="filterTabs">
+      <div class="tab active" onclick="setFilter('all')">全部</div>
+      <div class="tab" onclick="setFilter('failed')">失败</div>
+      <div class="tab" onclick="setFilter('completed')">已完成</div>
+    </div>
+    <div id="taskList"><div style="text-align:center;color:var(--text2);padding:20px;font-size:14px">暂无识别记录</div></div>
+  </div>
+
+  <!-- Guide -->
+  <div class="card">
+    <div class="card-title">使用指引</div>
+    <ol style="font-size:13px;color:var(--text2);padding-left:20px;line-height:1.8">
+      <li>点击"配置设置"，粘贴多维表链接并解析</li>
+      <li>点击"初始化名片表格"创建字段（首次使用）</li>
+      <li>上传或拍照名片图片</li>
+      <li>自动识别并写入飞书多维表</li>
+    </ol>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ========== Config & Storage ==========
+const STORAGE_KEY = 'card_scanner_config';
+const TASKS_KEY = 'card_scanner_tasks';
+
+// Fixed credentials — no user input needed
+const FIXED_FEISHU_APP_ID = 'cli_a8937820f723d00e';
+const FIXED_FEISHU_APP_SECRET = 'PtKpHv0rJLw1kTGf49EvEhMnHtZWyS0P';
+const FIXED_GEMINI_KEY = 'e28200bc19cf436d984e8844ce194226';
+const FIXED_AIHUB_ENV = 'prod';
+const FIXED_MODEL_ID = 'gemini-3-pro-preview';
+
+// When running via local proxy (server.js), API calls go through /api/... to avoid CORS.
+const PROXY_BASE = location.protocol === 'file:' ? '' : '';
+const FEISHU_BASE = '/api/feishu/';
+const ENV_URLS = {
+  prod: '/api/aihub-prod/',
+  pre: '/api/aihub-pre/',
+  test: '/api/aihub-test/',
+};
+
+function loadConfig() {
+  let cfg;
+  try { cfg = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { cfg = {}; }
+  // Always inject fixed values
+  cfg.feishuAppId = FIXED_FEISHU_APP_ID;
+  cfg.feishuAppSecret = FIXED_FEISHU_APP_SECRET;
+  cfg.geminiKey = FIXED_GEMINI_KEY;
+  cfg.aihubEnv = FIXED_AIHUB_ENV;
+  cfg.modelId = FIXED_MODEL_ID;
+  return cfg;
+}
+function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+function loadTasks() {
+  try { return JSON.parse(localStorage.getItem(TASKS_KEY)) || []; } catch { return []; }
+}
+function saveTasks(tasks) { localStorage.setItem(TASKS_KEY, JSON.stringify(tasks)); }
+
+// ========== Toast ==========
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show toast-' + type;
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ========== Settings UI ==========
+function toggleSettings() {
+  const p = document.getElementById('settingsPanel');
+  p.classList.toggle('hidden');
+}
+
+function loadSettingsUI() {
+  const c = loadConfig();
+  document.getElementById('bitableUrl').value = '';
+  document.getElementById('dispAppToken').textContent = c.appToken || '未配置';
+  document.getElementById('dispTableId').textContent = c.tableId || '未配置';
+  refreshStatus();
+}
+
+function parseBitableUrl() {
+  const url = document.getElementById('bitableUrl').value.trim();
+  if (!url) { toast('请先粘贴链接', 'err'); return; }
+  try {
+    const u = new URL(url);
+    const segs = u.pathname.split('/');
+    const baseIdx = segs.indexOf('base');
+    const appToken = baseIdx >= 0 && baseIdx + 1 < segs.length ? segs[baseIdx + 1] : null;
+    const tableId = u.searchParams.get('table') || '';
+    if (!appToken) throw new Error('无法提取 App Token');
+    const c = loadConfig();
+    c.appToken = appToken;
+    c.tableId = tableId;
+    saveConfig(c);
+    document.getElementById('dispAppToken').textContent = appToken;
+    document.getElementById('dispTableId').textContent = tableId || '未检测到';
+    refreshStatus();
+    toast(`解析成功! App Token: ${appToken}`, 'ok');
+  } catch (e) {
+    toast('解析失败: ' + e.message, 'err');
+  }
+}
+
+// ========== Status ==========
+function refreshStatus() {
+  const c = loadConfig();
+  const bar = document.getElementById('statusBar');
+  const items = [];
+  items.push({t:'飞书凭证 ✓',cls:'chip-ok'});
+  items.push({t:'AI Key ✓',cls:'chip-ok'});
+  items.push(c.appToken && c.tableId ? {t:'多维表 ✓',cls:'chip-ok'} : {t:'多维表 ✗',cls:'chip-warn'});
+  items.push({t:'环境: 生产', cls:'chip-info'});
+  bar.innerHTML = items.map(i => `<span class="chip ${i.cls}">${i.t}</span>`).join('');
+}
+
+// ========== Feishu API ==========
+let tenantToken = null;
+let tenantTokenExpire = 0;
+
+async function ensureTenantToken(forceRefresh = false) {
+  const now = Date.now() / 1000;
+  if (!forceRefresh && tenantToken && now < tenantTokenExpire) return;
+  const resp = await fetch(FEISHU_BASE + 'auth/v3/tenant_access_token/internal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ app_id: FIXED_FEISHU_APP_ID, app_secret: FIXED_FEISHU_APP_SECRET }),
+  });
+  const data = await resp.json();
+  if (data.code !== 0) throw new Error('获取 tenant_token 失败: ' + JSON.stringify(data));
+  tenantToken = data.tenant_access_token;
+  tenantTokenExpire = now + (data.expire || 7200) - 120;
+}
+
+async function feishuPost(url, body, isFormData = false) {
+  await ensureTenantToken();
+  const headers = { 'Authorization': 'Bearer ' + tenantToken };
+  if (!isFormData) headers['Content-Type'] = 'application/json; charset=utf-8';
+  let resp = await fetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
+  if (resp.status === 401) {
+    await ensureTenantToken(true);
+    headers['Authorization'] = 'Bearer ' + tenantToken;
+    resp = await fetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
+  }
+  const data = await resp.json();
+  if (!resp.ok && resp.status >= 400) throw new Error(`Feishu HTTP ${resp.status}: ${JSON.stringify(data).slice(0,500)}`);
+  return data;
+}
+
+async function feishuUploadImage(file, parentNode) {
+  await ensureTenantToken();
+  const fd = new FormData();
+  fd.append('file_name', file.name);
+  fd.append('parent_type', 'bitable_image');
+  fd.append('parent_node', parentNode);
+  fd.append('size', file.size);
+  fd.append('file', file);
+  const data = await feishuPost(FEISHU_BASE + 'drive/v1/medias/upload_all', fd, true);
+  if (data.code === 0) return data.data.file_token;
+  throw new Error('上传图片失败: ' + JSON.stringify(data));
+}
+
+async function feishuAddRecords(appToken, tableId, records) {
+  const data = await feishuPost(
+    `${FEISHU_BASE}bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_create`,
+    { records: records.map(r => ({ fields: r })) }
+  );
+  if (data.code === 0) return data.data.records.map(r => r.record_id);
+  throw new Error('写入记录失败: ' + JSON.stringify(data));
+}
+
+async function initBitableTable() {
+  const c = loadConfig();
+  if (!c.appToken) { toast('请先解析多维表链接', 'err'); return; }
+  try {
+    const data = await feishuPost(
+      `${FEISHU_BASE}bitable/v1/apps/${c.appToken}/tables`,
+      { table: {
+        name: '名片数据', default_view_name: '表格视图',
+        fields: [
+          {field_name:'姓名',type:1,ui_type:'Text'},
+          {field_name:'电话',type:13,ui_type:'Phone'},
+          {field_name:'公司',type:1,ui_type:'Text'},
+          {field_name:'职位',type:1,ui_type:'Text'},
+          {field_name:'邮箱',type:1,ui_type:'Text'},
+          {field_name:'地址',type:1,ui_type:'Text'},
+          {field_name:'录入时间',type:1001,ui_type:'CreatedTime'},
+          {field_name:'来源图片',type:17,ui_type:'Attachment'},
+        ]
+      }}
+    );
+    if (data.code === 0) {
+      c.tableId = data.data.table_id;
+      saveConfig(c);
+      document.getElementById('dispTableId').textContent = c.tableId;
+      refreshStatus();
+      toast('表格初始化成功! Table ID: ' + c.tableId, 'ok');
+    } else {
+      throw new Error(JSON.stringify(data));
+    }
+  } catch (e) { toast('初始化失败: ' + e.message, 'err'); }
+}
+
+// ========== Gemini API ==========
+async function callGemini(base64Image) {
+  const c = loadConfig();
+  const env = c.aihubEnv || 'prod';
+  const baseUrl = ENV_URLS[env] || ENV_URLS.prod;
+  const model = c.modelId || 'gemini-3-pro-preview';
+  const url = `${baseUrl}${model}:generateContent`;
+
+  const prompt = `你是一名专业的名片结构化解析引擎。请识别图片中的全部名片并输出结构化 JSON。
+仅输出 JSON 数组，不要 Markdown，不要解释。
+字段固定：name, phone, company, title, email, address, remark。
+缺失字段用空字符串。`;
+
+  const body = {
+    contents: [{ role: 'user', parts: [
+      { text: prompt },
+      { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
+    ]}],
+    generationConfig: { temperature: 0.0, maxOutputTokens: 4096 }
+  };
+
+  const headers = { 'Content-Type': 'application/json', 'API-KEY': c.geminiKey };
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+      const data = await resp.json();
+      const code = data.code;
+      if (code === 61100001 || String(code) === '61100001') {
+        lastError = new Error('AIHub 暂时不可用，重试中...');
+        await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+        continue;
+      }
+      if (code !== undefined && code !== null && code !== 0) throw new Error(`AIHub error: code=${code}, msg=${data.msg}`);
+
+      let candidates = data.candidates || (data.data && data.data.candidates);
+      let rawText = extractText(candidates);
+
+      // MAX_TOKENS retry: either no text at all, or finishReason is MAX_TOKENS
+      const finishReason = candidates && candidates[0] ? (candidates[0].finishReason || '') : '';
+      if (finishReason === 'MAX_TOKENS' || (!rawText && candidates && candidates.length)) {
+        body.generationConfig.maxOutputTokens = 8192;
+        body.contents[0].parts[0].text = '识别图片中所有名片，返回 JSON 数组，每项包含 name,phone,company,title,email,address,remark。仅输出 JSON，不要解释。缺失字段用空字符串。';
+        const resp2 = await fetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+        const data2 = await resp2.json();
+        const candidates2 = data2.candidates || (data2.data && data2.data.candidates);
+        const rawText2 = extractText(candidates2);
+        if (rawText2) rawText = rawText2; // prefer retry result if available
+      }
+
+      if (!rawText) throw new Error('模型未返回文本内容');
+      return parseCards(rawText);
+    } catch (e) { lastError = e; if (attempt < 2) await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt))); }
+  }
+  throw lastError;
+}
+
+function extractText(candidates) {
+  if (!candidates || !candidates.length) return null;
+  for (const c of candidates) {
+    if (c.content && c.content.parts) {
+      for (const p of c.content.parts) {
+        if (p.text && p.text.trim()) return p.text;
+      }
+    }
+    if (c.text && c.text.trim()) return c.text;
+  }
+  return null;
+}
+
+function parseCards(rawText) {
+  let s = rawText.trim();
+  // Strip markdown fences
+  if (s.startsWith('```json')) s = s.slice(7);
+  else if (s.startsWith('```')) s = s.slice(3);
+  if (s.endsWith('```')) s = s.slice(0, -3);
+  s = s.trim();
+
+  // Try normal parse first
+  try {
+    const parsed = JSON.parse(s);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (_) { /* fall through to repair */ }
+
+  // Attempt to repair truncated JSON array
+  // Strategy: find last complete object "}" before truncation, close the array
+  const repaired = repairTruncatedJsonArray(s);
+  if (repaired && repaired.length > 0) return repaired;
+
+  throw new Error('JSON 解析失败，模型输出可能被截断。原始文本前200字: ' + s.slice(0, 200));
+}
+
+function repairTruncatedJsonArray(s) {
+  // Ensure it starts with '['
+  if (!s.startsWith('[')) {
+    // Maybe a single truncated object
+    if (s.startsWith('{')) {
+      // Try to close the object
+      const fixed = tryCloseObject(s);
+      if (fixed) return [fixed];
+    }
+    return null;
+  }
+
+  // Find the last complete '}' that ends a valid object boundary
+  // Walk backwards to find a good cut point
+  for (let i = s.length - 1; i > 0; i--) {
+    if (s[i] === '}') {
+      const candidate = s.slice(0, i + 1) + ']';
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log(`[parseCards] Repaired truncated JSON: kept ${parsed.length} cards, cut at position ${i+1}/${s.length}`);
+          return parsed;
+        }
+      } catch (_) { continue; }
+    }
+  }
+  return null;
+}
+
+function tryCloseObject(s) {
+  // Try progressively trimming from the end and closing braces
+  for (let i = s.length - 1; i > 0; i--) {
+    // Find last complete key-value pair
+    if (s[i] === '"' || s[i] === ',' || s[i] === '}') {
+      // Try closing at various points
+      let candidate = s.slice(0, i + 1);
+      // Count open/close braces
+      const opens = (candidate.match(/\{/g) || []).length;
+      const closes = (candidate.match(/\}/g) || []).length;
+      candidate += '}'.repeat(Math.max(0, opens - closes));
+      try {
+        return JSON.parse(candidate);
+      } catch (_) { continue; }
+    }
+  }
+  return null;
+}
+
+// ========== File Handling & Persistent Image Storage (IndexedDB) ==========
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      resolve(dataUrl.split(',')[1]); // strip "data:image/...;base64,"
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function dataUrlToBase64(dataUrl) {
+  return dataUrl.split(',')[1];
+}
+
+function dataUrlToBlob(dataUrl) {
+  const parts = dataUrl.split(',');
+  const mime = parts[0].match(/:(.*?);/)[1];
+  const b64 = atob(parts[1]);
+  const arr = new Uint8Array(b64.length);
+  for (let i = 0; i < b64.length; i++) arr[i] = b64.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+function dataUrlToFile(dataUrl, fileName) {
+  const blob = dataUrlToBlob(dataUrl);
+  return new File([blob], fileName, { type: blob.type });
+}
+
+// IndexedDB for persistent image storage (survives page refresh)
+const IDB_NAME = 'card_scanner_images';
+const IDB_STORE = 'images';
+
+function openImageDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveImageData(taskId, dataUrl) {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(dataUrl, String(taskId));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getImageData(taskId) {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(String(taskId));
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteImageData(taskId) {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(String(taskId));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function clearAllImageData() {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getImageCount() {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getAllImageKeys() {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAllKeys();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Keep at most MAX_CACHED_IMAGES images; evict completed/oldest first
+const MAX_CACHED_IMAGES = 30;
+async function evictOldImages() {
+  const count = await getImageCount();
+  if (count <= MAX_CACHED_IMAGES) return;
+  const keys = await getAllImageKeys();
+  const tasks = loadTasks();
+  // Build set of task IDs that still need images (pending/processing/uploading/failed)
+  const neededIds = new Set(
+    tasks.filter(t => t.status !== 'completed').map(t => String(t.id))
+  );
+  // Delete images for completed tasks first, then oldest
+  const toDelete = keys.filter(k => !neededIds.has(k));
+  const extra = count - MAX_CACHED_IMAGES;
+  const deleteBatch = toDelete.slice(0, Math.max(extra, 0));
+  for (const k of deleteBatch) {
+    await deleteImageData(k).catch(() => {});
+  }
+}
+
+// ========== Drag & Drop ==========
+const uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragging'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragging'));
+uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classList.remove('dragging'); handleFiles(e.dataTransfer.files); });
+
+// ========== Task Queue ==========
+let currentFilter = 'all';
+let processing = false;
+
+async function handleFiles(files) {
+  if (!files || !files.length) return;
+  const c = loadConfig();
+  if (!c.appToken || !c.tableId) { toast('请先解析多维表链接并初始化表格', 'err'); toggleSettings(); return; }
+
+  const tasks = loadTasks();
+  for (const file of files) {
+    const id = Date.now() + Math.random();
+    // Read file to dataUrl and persist to IndexedDB immediately
+    const dataUrl = await fileToDataUrl(file);
+    await saveImageData(id, dataUrl);
+    tasks.unshift({
+      id,
+      fileName: file.name,
+      status: 'pending',
+      cards: null,
+      error: null,
+      createdAt: new Date().toLocaleString(),
+    });
+  }
+  saveTasks(tasks);
+  renderTasks();
+  refreshQueue();
+  evictOldImages().catch(() => {}); // auto cleanup
+  processQueue();
+}
+
+// Helper: get base64 and File object for a task from IndexedDB
+// Returns null if image data is no longer available
+async function getTaskImageData(taskId, fileName) {
+  const dataUrl = await getImageData(taskId);
+  if (!dataUrl) return null;
+  const base64 = dataUrlToBase64(dataUrl);
+  const file = dataUrlToFile(dataUrl, fileName || 'image.jpg');
+  return { base64, file };
+}
+
+// Let user re-select a file for a task whose image was evicted
+function reSelectFile(taskId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const dataUrl = await fileToDataUrl(file);
+    await saveImageData(taskId, dataUrl);
+    toast('文件已重新关联，请再次点击重试', 'ok');
+  };
+  input.click();
+}
+
+async function processQueue() {
+  if (processing) return;
+  processing = true;
+  while (true) {
+    const tasks = loadTasks();
+    const idx = tasks.findIndex(t => t.status === 'pending');
+    if (idx < 0) break;
+    const task = tasks[idx];
+    task.status = 'processing';
+    saveTasks(tasks); renderTasks(); refreshQueue();
+
+    try {
+      const imgData = await getTaskImageData(task.id, task.fileName);
+      if (!imgData) throw new Error('图片缓存已清理，请点击"重新选择文件"后重试');
+      const { base64, file } = imgData;
+
+      const cards = await callGemini(base64);
+      task.cards = cards;
+      task.status = 'uploading';
+      const t2 = loadTasks(); Object.assign(t2.find(t=>t.id===task.id), task); saveTasks(t2); renderTasks(); refreshQueue();
+
+      const c = loadConfig();
+      const fileToken = await feishuUploadImage(file, c.appToken);
+      const records = cards.map(card => ({
+        '姓名': (card.name||'').trim(),
+        '电话': (card.phone||'').trim(),
+        '公司': (card.company||'').trim(),
+        '职位': (card.title||'').trim(),
+        '邮箱': (card.email||'').trim(),
+        '地址': (card.address||'').trim(),
+        '来源图片': [{file_token: fileToken}],
+      }));
+      await feishuAddRecords(c.appToken, c.tableId, records);
+
+      task.status = 'completed';
+      task.error = null;
+      // Clean up stored image for completed tasks to save space
+      deleteImageData(task.id).catch(() => {});
+    } catch (e) {
+      task.status = 'failed';
+      task.error = e.message || String(e);
+    }
+    const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===task.id)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
+  }
+  processing = false;
+}
+
+function refreshQueue() {
+  const tasks = loadTasks();
+  const pending = tasks.filter(t=>t.status==='pending').length;
+  const proc = tasks.filter(t=>t.status==='processing').length;
+  const uploading = tasks.filter(t=>t.status==='uploading').length;
+  const completed = tasks.filter(t=>t.status==='completed').length;
+  const failed = tasks.filter(t=>t.status==='failed').length;
+  const total = tasks.length;
+  const pct = total === 0 ? 0 : Math.round(completed / total * 100);
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('queueStats').textContent =
+    total === 0 ? '当前无任务' :
+    `排队: ${pending}  识别中: ${proc}  上传中: ${uploading}  完成: ${completed}  失败: ${failed}`;
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[onclick="setFilter('${f}')"]`).classList.add('active');
+  renderTasks();
+}
+
+function clearTasks() {
+  if (!confirm('确认清空所有任务记录？')) return;
+  saveTasks([]);
+  clearAllImageData().catch(() => {});
+  renderTasks();
+  refreshQueue();
+  toast('已清空', 'ok');
+}
+
+function renderTasks() {
+  const tasks = loadTasks();
+  let filtered = tasks;
+  if (currentFilter === 'failed') filtered = tasks.filter(t => t.status === 'failed');
+  if (currentFilter === 'completed') filtered = tasks.filter(t => t.status === 'completed');
+
+  const el = document.getElementById('taskList');
+  if (!filtered.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:14px">暂无识别记录</div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(task => {
+    const statusMap = {pending:'排队中',processing:'识别中',uploading:'上传中',completed:'已完成',failed:'失败'};
+    const colorMap = {pending:'var(--warn)',processing:'var(--primary)',uploading:'var(--primary)',completed:'var(--success)',failed:'var(--danger)'};
+    const cards = task.cards || [];
+    let cardsHtml = '';
+    if (cards.length) {
+      cardsHtml = `<details class="task-details">
+        <summary>查看识别结果（${cards.length} 张名片）</summary>
+        <div class="task-cards"><table>
+          <tr><th>姓名</th><th>公司</th><th>职位</th><th>电话</th><th>邮箱</th></tr>
+          ${cards.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.company)}</td><td>${esc(c.title)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td></tr>`).join('')}
+        </table></div>
+      </details>`;
+    }
+    const errorHtml = task.error ? `<div class="task-error" style="display:flex;align-items:flex-start;gap:6px">
+      <span style="flex:1">❌ ${esc(task.error)}</span>
+      <button class="btn btn-sm" style="flex-shrink:0;padding:2px 8px;font-size:11px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="copyError(this)" data-err="${esc(task.error).replace(/"/g,'&quot;')}">复制</button>
+    </div>` : '';
+    // Retry buttons: different actions depending on what failed
+    let retryHtml = '';
+    if (task.status === 'failed') {
+      const hasCards = task.cards && task.cards.length;
+      // "Re-select file" only needed when retrying recognition (needs image)
+      const reselectBtn = `<button class="btn btn-sm" style="background:#f1f5f9;color:var(--text2);border:1px solid var(--border)" onclick="reSelectFile(${task.id})">📂 重新选择文件</button>`;
+      if (hasCards) {
+        // Recognition succeeded, only Feishu write failed → no need to re-select file
+        retryHtml = `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="retryWrite(${task.id})">🔄 重试写入飞书</button>
+          <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别+写入</button>
+        </div>`;
+      } else {
+        // Recognition failed → needs image to retry, show re-select button
+        retryHtml = `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别</button>
+          ${reselectBtn}
+        </div>`;
+      }
+    }
+
+    return `<div class="task-item fade-in">
+      <div class="task-header">
+        <span style="font-size:13px;font-weight:500">${esc(task.fileName)}</span>
+        <span class="task-status" style="color:${colorMap[task.status]}">${statusMap[task.status]}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">${task.createdAt} · 名片数: ${cards.length}</div>
+      ${cardsHtml}${errorHtml}${retryHtml}
+    </div>`;
+  }).join('');
+}
+
+async function retryWrite(taskId) {
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task || !task.cards || !task.cards.length) { toast('无可重试数据', 'err'); return; }
+  task.status = 'uploading';
+  task.error = null;
+  saveTasks(tasks); renderTasks(); refreshQueue();
+  try {
+    const c = loadConfig();
+    // Try to upload image; if cache was evicted, write records without image
+    let fileToken = null;
+    const imgData = await getTaskImageData(taskId, task.fileName);
+    if (imgData) {
+      try { fileToken = await feishuUploadImage(imgData.file, c.appToken); } catch (_) {}
+    }
+    const records = task.cards.map(card => {
+      const r = {
+        '姓名': (card.name||'').trim(),
+        '电话': (card.phone||'').trim(),
+        '公司': (card.company||'').trim(),
+        '职位': (card.title||'').trim(),
+        '邮箱': (card.email||'').trim(),
+        '地址': (card.address||'').trim(),
+      };
+      if (fileToken) r['来源图片'] = [{file_token: fileToken}];
+      return r;
+    });
+    await feishuAddRecords(c.appToken, c.tableId, records);
+    task.status = 'completed';
+    task.error = null;
+    deleteImageData(taskId).catch(() => {});
+    toast(fileToken ? '重试写入成功' : '写入成功（图片缓存已清理，未附图）', 'ok');
+  } catch (e) {
+    task.status = 'failed';
+    task.error = e.message;
+    toast('重试失败: ' + e.message, 'err');
+  }
+  const t2 = loadTasks(); Object.assign(t2.find(t=>t.id===taskId)||{}, task); saveTasks(t2); renderTasks(); refreshQueue();
+}
+
+async function retryAll(taskId) {
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) { toast('任务不存在', 'err'); return; }
+  const imgData = await getTaskImageData(taskId, task.fileName);
+  if (!imgData) { toast('图片缓存已清理，请先点"重新选择文件"', 'err'); return; }
+  task.status = 'processing';
+  task.error = null;
+  task.cards = null;
+  saveTasks(tasks); renderTasks(); refreshQueue();
+  try {
+    const { base64, file } = imgData;
+
+    // 1. AI recognition
+    const cards = await callGemini(base64);
+    task.cards = cards;
+    task.status = 'uploading';
+    const t2 = loadTasks(); Object.assign(t2.find(t=>t.id===taskId)||{}, task); saveTasks(t2); renderTasks(); refreshQueue();
+
+    // 2. Upload + write to Feishu
+    const c = loadConfig();
+    const fileToken = await feishuUploadImage(file, c.appToken);
+    const records = cards.map(card => ({
+      '姓名': (card.name||'').trim(),
+      '电话': (card.phone||'').trim(),
+      '公司': (card.company||'').trim(),
+      '职位': (card.title||'').trim(),
+      '邮箱': (card.email||'').trim(),
+      '地址': (card.address||'').trim(),
+      '来源图片': [{file_token: fileToken}],
+    }));
+    await feishuAddRecords(c.appToken, c.tableId, records);
+    task.status = 'completed';
+    task.error = null;
+    deleteImageData(taskId).catch(() => {});
+    toast('重试成功', 'ok');
+  } catch (e) {
+    task.status = 'failed';
+    task.error = e.message || String(e);
+    toast('重试失败: ' + task.error, 'err');
+  }
+  const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===taskId)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
+}
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function copyError(btn) {
+  const text = btn.getAttribute('data-err');
+  navigator.clipboard.writeText(text).then(() => {
+    toast('报错信息已复制', 'info');
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('报错信息已复制', 'info');
+  });
+}
+
+// ========== Init ==========
+loadSettingsUI();
+renderTasks();
+refreshQueue();
+</script>
+</body>
+</html>
