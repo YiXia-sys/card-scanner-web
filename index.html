@@ -111,15 +111,21 @@ input:focus,select:focus{border-color:var(--primary)}
 
   <!-- Upload Area -->
   <div class="card">
-    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('galleryInput').click()">
       <div class="icon">📸</div>
       <p>点击上传名片照片，或拖拽到此处</p>
-      <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，手机可直接拍照</p>
+      <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，可多选</p>
     </div>
-    <input type="file" id="fileInput" accept="image/*" capture="environment" multiple class="hidden" onchange="handleFiles(this.files)">
-    <div style="margin-top:8px;text-align:center">
-      <button class="btn btn-primary btn-lg btn-block" onclick="document.getElementById('fileInput').click()">
-        📷 拍照 / 选择图片
+    <!-- 拍照（iOS 直接打开相机） -->
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden" onchange="handleFiles(this.files)">
+    <!-- 相册选择（不带 capture，iOS 弹出相册） -->
+    <input type="file" id="galleryInput" accept="image/*" multiple class="hidden" onchange="handleFiles(this.files)">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-lg" style="flex:1" onclick="document.getElementById('cameraInput').click()">
+        📷 拍照
+      </button>
+      <button class="btn btn-outline btn-lg" style="flex:1" onclick="document.getElementById('galleryInput').click()">
+        🖼️ 从相册选择
       </button>
     </div>
   </div>
