@@ -267,11 +267,24 @@ function refreshStatus() {
 let tenantToken = null;
 let tenantTokenExpire = 0;
 
+// Wrap fetch to provide friendly error messages instead of raw "Failed to fetch"
+async function safeFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (e) {
+    const short = url.replace(/https?:\/\/[^/]+/, '').slice(0, 60);
+    if (e.message === 'Failed to fetch' || e.name === 'TypeError') {
+      throw new Error(`网络请求失败 (${short})，请检查网络连接或服务器是否正常运行`);
+    }
+    throw e;
+  }
+}
+
 async function ensureTenantToken(forceRefresh = false) {
   const now = Date.now() / 1000;
   if (!forceRefresh && tenantToken && now < tenantTokenExpire) return;
   // Call server-side endpoint — credentials never leave the server
-  const resp = await fetch('/api/internal/tenant-token', {
+  const resp = await safeFetch('/api/internal/tenant-token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
   });
@@ -285,11 +298,11 @@ async function feishuPost(url, body, isFormData = false) {
   await ensureTenantToken();
   const headers = { 'Authorization': 'Bearer ' + tenantToken };
   if (!isFormData) headers['Content-Type'] = 'application/json; charset=utf-8';
-  let resp = await fetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
+  let resp = await safeFetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
   if (resp.status === 401) {
     await ensureTenantToken(true);
     headers['Authorization'] = 'Bearer ' + tenantToken;
-    resp = await fetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
+    resp = await safeFetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
   }
   const data = await resp.json();
   if (!resp.ok && resp.status >= 400) throw new Error(`Feishu HTTP ${resp.status}: ${JSON.stringify(data).slice(0,500)}`);
@@ -376,7 +389,7 @@ async function callGemini(base64Image) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const resp = await fetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+      const resp = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
       // HTTP-level errors: fail fast, no retry
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
@@ -404,7 +417,7 @@ async function callGemini(base64Image) {
       if (finishReason === 'MAX_TOKENS' || (!rawText && candidates && candidates.length)) {
         body.generationConfig.maxOutputTokens = 8192;
         body.contents[0].parts[0].text = '识别图片中所有名片，返回 JSON 数组，每项包含 name,phone,company,title,email,address,remark。仅输出 JSON，不要解释。缺失字段用空字符串。';
-        const resp2 = await fetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+        const resp2 = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
         const data2 = await resp2.json();
         const candidates2 = data2.candidates || (data2.data && data2.data.candidates);
         const rawText2 = extractText(candidates2);
