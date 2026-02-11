@@ -949,18 +949,22 @@ function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.
 
 function copyError(btn) {
   const text = btn.getAttribute('data-err');
-  navigator.clipboard.writeText(text).then(() => {
-    toast('报错信息已复制', 'info');
-  }).catch(() => {
-    // Fallback for older browsers
+  // Use textarea fallback — works on HTTP and all mobile browsers
+  try {
     const ta = document.createElement('textarea');
     ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
     document.body.appendChild(ta);
+    ta.focus();
     ta.select();
+    // iOS Safari needs setSelectionRange
+    ta.setSelectionRange(0, ta.value.length);
     document.execCommand('copy');
     document.body.removeChild(ta);
     toast('报错信息已复制', 'info');
-  });
+  } catch (e) {
+    toast('复制失败，请长按手动复制', 'err');
+  }
 }
 
 // ========== Init ==========
