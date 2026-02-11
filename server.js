@@ -80,16 +80,41 @@ function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
     headers: fwdHeaders,
   };
 
+  const startTime = Date.now();
+
   const proxyReq = transport.request(options, (proxyRes) => {
-    clientRes.setHeader('Access-Control-Allow-Origin', '*');
-    clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    clientRes.setHeader('Access-Control-Allow-Headers', '*');
-    clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(clientRes);
+    const status = proxyRes.statusCode;
+    const elapsed = Date.now() - startTime;
+
+    // Collect response for logging (only for non-2xx or small responses)
+    if (status >= 400) {
+      // Log error response body
+      const chunks = [];
+      proxyRes.on('data', c => chunks.push(c));
+      proxyRes.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        console.error(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+        console.error(`[resp body] ${body.slice(0, 1000)}`);
+        clientRes.setHeader('Access-Control-Allow-Origin', '*');
+        clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        clientRes.setHeader('Access-Control-Allow-Headers', '*');
+        clientRes.writeHead(status, proxyRes.headers);
+        clientRes.end(Buffer.concat(chunks));
+      });
+    } else {
+      // Success: log status only, stream response
+      console.log(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+      clientRes.setHeader('Access-Control-Allow-Origin', '*');
+      clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      clientRes.setHeader('Access-Control-Allow-Headers', '*');
+      clientRes.writeHead(status, proxyRes.headers);
+      proxyRes.pipe(clientRes);
+    }
   });
 
   proxyReq.on('error', (err) => {
-    console.error('[proxy error]', err.message);
+    const elapsed = Date.now() - startTime;
+    console.error(`[proxy error] ${elapsed}ms ${err.message} -> ${targetUrl}`);
     clientRes.writeHead(502, { 'Content-Type': 'application/json' });
     clientRes.end(JSON.stringify({ error: 'Proxy error: ' + err.message }));
   });
@@ -106,6 +131,7 @@ function handleTenantToken(req, res) {
   }
 
   const body = JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET });
+  const startTime = Date.now();
 
   const proxyReq = https.request({
     hostname: 'open.feishu.cn',
@@ -116,13 +142,24 @@ function handleTenantToken(req, res) {
       'Content-Length': Buffer.byteLength(body),
     },
   }, (proxyRes) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.writeHead(proxyRes.statusCode);
-    proxyRes.pipe(res);
+    const chunks = [];
+    proxyRes.on('data', c => chunks.push(c));
+    proxyRes.on('end', () => {
+      const elapsed = Date.now() - startTime;
+      const respBody = Buffer.concat(chunks).toString('utf8');
+      const status = proxyRes.statusCode;
+      console.log(`[tenant-token] ${status} ${elapsed}ms`);
+      if (status >= 400) console.error(`[tenant-token body] ${respBody.slice(0, 500)}`);
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.writeHead(status);
+      res.end(respBody);
+    });
   });
 
   proxyReq.on('error', (err) => {
+    const elapsed = Date.now() - startTime;
+    console.error(`[tenant-token error] ${elapsed}ms ${err.message}`);
     res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ code: -1, msg: 'Proxy error: ' + err.message }));
   });
