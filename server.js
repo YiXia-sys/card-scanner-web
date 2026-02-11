@@ -60,83 +60,82 @@ const PROXY_ROUTES = {
   '/api/aihub-test/': 'http://apisix-gw-ali-hd1.test.xiaopeng.com/xp-ai-hub-boot/api/v1/beta/google/gemini/',
 };
 
-// ========== 代理请求（支持额外注入 headers） ==========
+// ========== 代理请求（全量缓冲，避免 pipe 断裂） ==========
 function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
-  const parsed = new URL(targetUrl);
-  const isHttps = parsed.protocol === 'https:';
-  const transport = isHttps ? https : http;
-
-  const fwdHeaders = {};
-  for (const [k, v] of Object.entries(clientReq.headers)) {
-    const low = k.toLowerCase();
-    if (['host', 'origin', 'referer', 'connection'].includes(low)) continue;
-    fwdHeaders[k] = v;
-  }
-  fwdHeaders['host'] = parsed.host;
-
-  // Inject extra headers (server-side secrets)
-  if (extraHeaders) {
-    Object.assign(fwdHeaders, extraHeaders);
-  }
-
-  const options = {
-    hostname: parsed.hostname,
-    port: parsed.port || (isHttps ? 443 : 80),
-    path: parsed.pathname + parsed.search,
-    method: clientReq.method,
-    headers: fwdHeaders,
-  };
-
   const startTime = Date.now();
 
-  const proxyReq = transport.request(options, (proxyRes) => {
-    const status = proxyRes.statusCode;
-    const elapsed = Date.now() - startTime;
+  // CORS response headers (guaranteed on every response)
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': '*',
+  };
 
-    // Build clean response headers: keep upstream content-type, force CORS
-    function buildHeaders() {
-      const h = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-      };
-      // Forward safe upstream headers
-      const ct = proxyRes.headers['content-type'];
-      if (ct) h['Content-Type'] = ct;
-      const cl = proxyRes.headers['content-length'];
-      if (cl) h['Content-Length'] = cl;
-      return h;
+  // 1. Buffer full client request body first
+  const reqChunks = [];
+  clientReq.on('data', c => reqChunks.push(c));
+  clientReq.on('end', () => {
+    const reqBody = Buffer.concat(reqChunks);
+
+    const parsed = new URL(targetUrl);
+    const isHttps = parsed.protocol === 'https:';
+    const transport = isHttps ? https : http;
+
+    // Build forwarding headers
+    const fwdHeaders = {};
+    for (const [k, v] of Object.entries(clientReq.headers)) {
+      const low = k.toLowerCase();
+      if (['host', 'origin', 'referer', 'connection', 'transfer-encoding'].includes(low)) continue;
+      fwdHeaders[k] = v;
     }
+    fwdHeaders['host'] = parsed.host;
+    fwdHeaders['content-length'] = reqBody.length;
+    if (extraHeaders) Object.assign(fwdHeaders, extraHeaders);
 
-    if (status >= 400) {
-      // Log error response body, then return to client with CORS
-      const chunks = [];
-      proxyRes.on('data', c => chunks.push(c));
+    // 2. Send to upstream
+    const proxyReq = transport.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: clientReq.method,
+      headers: fwdHeaders,
+    }, (proxyRes) => {
+      // 3. Buffer full upstream response
+      const resChunks = [];
+      proxyRes.on('data', c => resChunks.push(c));
       proxyRes.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf8');
-        logErr(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
-        logErr(`[resp body] ${body.slice(0, 1000)}`);
-        const h = buildHeaders();
-        h['Content-Length'] = Buffer.byteLength(body);
+        const resBody = Buffer.concat(resChunks);
+        const elapsed = Date.now() - startTime;
+        const status = proxyRes.statusCode;
+
+        if (status >= 400) {
+          logErr(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+          logErr(`[resp body] ${resBody.toString('utf8').slice(0, 1000)}`);
+        } else {
+          log(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+        }
+
+        // 4. Return to browser with clean headers
+        const h = { ...corsHeaders };
+        const ct = proxyRes.headers['content-type'];
+        if (ct) h['Content-Type'] = ct;
+        h['Content-Length'] = resBody.length;
         clientRes.writeHead(status, h);
-        clientRes.end(body);
+        clientRes.end(resBody);
       });
-    } else {
-      // Success: log and stream
-      log(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
-      clientRes.writeHead(status, buildHeaders());
-      proxyRes.pipe(clientRes);
-    }
-  });
+    });
 
-  proxyReq.on('error', (err) => {
-    const elapsed = Date.now() - startTime;
-    logErr(`[proxy error] ${elapsed}ms ${err.message} -> ${targetUrl}`);
-    clientRes.writeHead(502, { 'Content-Type': 'application/json' });
-    clientRes.end(JSON.stringify({ error: 'Proxy error: ' + err.message }));
-  });
+    proxyReq.on('error', (err) => {
+      const elapsed = Date.now() - startTime;
+      logErr(`[proxy error] ${elapsed}ms ${err.message} -> ${targetUrl}`);
+      const body = JSON.stringify({ error: 'Proxy error: ' + err.message });
+      clientRes.writeHead(502, { ...corsHeaders, 'Content-Type': 'application/json' });
+      clientRes.end(body);
+    });
 
-  clientReq.pipe(proxyReq);
+    // Send buffered body all at once (no pipe race condition)
+    proxyReq.end(reqBody);
+  });
 }
 
 // ========== 服务端获取 tenant_access_token ==========
