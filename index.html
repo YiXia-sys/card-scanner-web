@@ -268,16 +268,28 @@ let tenantToken = null;
 let tenantTokenExpire = 0;
 
 // Wrap fetch to provide friendly error messages instead of raw "Failed to fetch"
+// err.message = friendly display text, err.rawDetail = original error for copy
 async function safeFetch(url, options) {
   try {
     return await fetch(url, options);
   } catch (e) {
     const short = url.replace(/https?:\/\/[^/]+/, '').slice(0, 60);
+    const raw = `${e.name}: ${e.message} | URL: ${url}`;
     if (e.message === 'Failed to fetch' || e.name === 'TypeError') {
-      throw new Error(`网络请求失败 (${short})，请检查网络连接或服务器是否正常运行`);
+      const err = new Error(`网络请求失败 (${short})，请检查网络连接或服务器是否正常运行`);
+      err.rawDetail = raw;
+      throw err;
     }
+    e.rawDetail = raw;
     throw e;
   }
+}
+
+// Helper: build an error with both friendly message and raw detail
+function makeApiError(friendlyMsg, rawDetail) {
+  const err = new Error(friendlyMsg);
+  err.rawDetail = rawDetail;
+  return err;
 }
 
 async function ensureTenantToken(forceRefresh = false) {
@@ -289,7 +301,7 @@ async function ensureTenantToken(forceRefresh = false) {
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
   });
   const data = await resp.json();
-  if (data.code !== 0) throw new Error('获取 tenant_token 失败: ' + JSON.stringify(data));
+  if (data.code !== 0) throw makeApiError('获取飞书凭证失败', JSON.stringify(data));
   tenantToken = data.tenant_access_token;
   tenantTokenExpire = now + (data.expire || 7200) - 120;
 }
@@ -305,7 +317,7 @@ async function feishuPost(url, body, isFormData = false) {
     resp = await safeFetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
   }
   const data = await resp.json();
-  if (!resp.ok && resp.status >= 400) throw new Error(`Feishu HTTP ${resp.status}: ${JSON.stringify(data).slice(0,500)}`);
+  if (!resp.ok && resp.status >= 400) throw makeApiError(`飞书接口错误 (${resp.status})`, `HTTP ${resp.status} | URL: ${url} | Body: ${JSON.stringify(data).slice(0,500)}`);
   return data;
 }
 
@@ -319,7 +331,7 @@ async function feishuUploadImage(file, parentNode) {
   fd.append('file', file);
   const data = await feishuPost(FEISHU_BASE + 'drive/v1/medias/upload_all', fd, true);
   if (data.code === 0) return data.data.file_token;
-  throw new Error('上传图片失败: ' + JSON.stringify(data));
+  throw makeApiError('上传图片失败', JSON.stringify(data));
 }
 
 async function feishuAddRecords(appToken, tableId, records) {
@@ -328,7 +340,7 @@ async function feishuAddRecords(appToken, tableId, records) {
     { records: records.map(r => ({ fields: r })) }
   );
   if (data.code === 0) return data.data.records.map(r => r.record_id);
-  throw new Error('写入记录失败: ' + JSON.stringify(data));
+  throw makeApiError('写入记录失败', JSON.stringify(data));
 }
 
 async function initBitableTable() {
@@ -393,10 +405,11 @@ async function callGemini(base64Image) {
       // HTTP-level errors: fail fast, no retry
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
-        let msg = `AI 服务 HTTP ${resp.status}: ${errText.slice(0, 200)}`;
+        const raw = `HTTP ${resp.status} | URL: ${url} | Body: ${errText.slice(0, 500)}`;
+        let msg = `AI 服务 HTTP ${resp.status}`;
         if (resp.status === 403) msg = 'AI 服务拒绝访问 (403)，请确认网络环境可访问 AIHub';
         if (resp.status === 401) msg = 'AI 服务鉴权失败 (401)，请检查 API-KEY';
-        const err = new Error(msg);
+        const err = makeApiError(msg, raw);
         err._noRetry = true;
         throw err;
       }
@@ -753,6 +766,7 @@ async function processQueue() {
     } catch (e) {
       task.status = 'failed';
       task.error = e.message || String(e);
+      task.errorRaw = e.rawDetail || e.message || String(e);
     }
     const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===task.id)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
   }
@@ -840,7 +854,7 @@ function renderTasks() {
     }
     const errorHtml = task.error ? `<div class="task-error" style="display:flex;align-items:flex-start;gap:6px">
       <span style="flex:1">❌ ${esc(task.error)}</span>
-      <button class="btn btn-sm" style="flex-shrink:0;padding:2px 8px;font-size:11px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="copyError(this)" data-err="${esc(task.error).replace(/"/g,'&quot;')}">复制</button>
+      <button class="btn btn-sm" style="flex-shrink:0;padding:2px 8px;font-size:11px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="copyError(this)" data-err="${esc(task.errorRaw || task.error).replace(/"/g,'&quot;')}">复制</button>
     </div>` : '';
     // Retry buttons: different actions depending on what failed
     let retryHtml = '';
@@ -909,6 +923,7 @@ async function retryWrite(taskId) {
   } catch (e) {
     task.status = 'failed';
     task.error = e.message;
+    task.errorRaw = e.rawDetail || e.message;
     toast('重试失败: ' + e.message, 'err');
   }
   const t2 = loadTasks(); Object.assign(t2.find(t=>t.id===taskId)||{}, task); saveTasks(t2); renderTasks(); refreshQueue();
@@ -953,6 +968,7 @@ async function retryAll(taskId) {
   } catch (e) {
     task.status = 'failed';
     task.error = e.message || String(e);
+    task.errorRaw = e.rawDetail || e.message || String(e);
     toast('重试失败: ' + task.error, 'err');
   }
   const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===taskId)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
