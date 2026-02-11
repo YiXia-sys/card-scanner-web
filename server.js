@@ -1,8 +1,9 @@
 /**
- * 名片扫描助手 - 本地代理服务
+ * 名片扫描助手 - 代理服务
  * 功能：
  *   1. 托管静态文件（index.html）
  *   2. 代理转发飞书 API 和 AIHub API 请求，绕过浏览器 CORS 限制
+ *   3. 服务端注入密钥，前端代码零泄露
  *
  * 启动: node server.js
  * 访问: http://localhost:3200
@@ -14,9 +15,27 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 
-const PORT = 3200;
+// ========== 读取 .env 配置 ==========
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
+    line = line.trim();
+    if (!line || line.startsWith('#')) return;
+    const idx = line.indexOf('=');
+    if (idx > 0) {
+      const key = line.slice(0, idx).trim();
+      const val = line.slice(idx + 1).trim();
+      if (!process.env[key]) process.env[key] = val;
+    }
+  });
+}
 
-// MIME types
+const PORT = process.env.PORT || 3200;
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+
+// ========== MIME & 路由 ==========
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -27,7 +46,6 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-// Proxy target mapping
 const PROXY_ROUTES = {
   '/api/feishu/': 'https://open.feishu.cn/open-apis/',
   '/api/aihub-prod/': 'https://ai-hub.xiaopeng.com/api/v1/beta/google/gemini/',
@@ -35,12 +53,12 @@ const PROXY_ROUTES = {
   '/api/aihub-test/': 'http://apisix-gw-ali-hd1.test.xiaopeng.com/xp-ai-hub-boot/api/v1/beta/google/gemini/',
 };
 
-function proxyRequest(clientReq, clientRes, targetUrl) {
+// ========== 代理请求（支持额外注入 headers） ==========
+function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
   const parsed = new URL(targetUrl);
   const isHttps = parsed.protocol === 'https:';
   const transport = isHttps ? https : http;
 
-  // Build headers: forward most, skip host/origin/referer
   const fwdHeaders = {};
   for (const [k, v] of Object.entries(clientReq.headers)) {
     const low = k.toLowerCase();
@@ -48,6 +66,11 @@ function proxyRequest(clientReq, clientRes, targetUrl) {
     fwdHeaders[k] = v;
   }
   fwdHeaders['host'] = parsed.host;
+
+  // Inject extra headers (server-side secrets)
+  if (extraHeaders) {
+    Object.assign(fwdHeaders, extraHeaders);
+  }
 
   const options = {
     hostname: parsed.hostname,
@@ -58,7 +81,6 @@ function proxyRequest(clientReq, clientRes, targetUrl) {
   };
 
   const proxyReq = transport.request(options, (proxyRes) => {
-    // Add CORS headers to response
     clientRes.setHeader('Access-Control-Allow-Origin', '*');
     clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     clientRes.setHeader('Access-Control-Allow-Headers', '*');
@@ -75,6 +97,41 @@ function proxyRequest(clientReq, clientRes, targetUrl) {
   clientReq.pipe(proxyReq);
 }
 
+// ========== 服务端获取 tenant_access_token ==========
+function handleTenantToken(req, res) {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ code: -1, msg: '服务端未配置 FEISHU_APP_ID / FEISHU_APP_SECRET' }));
+    return;
+  }
+
+  const body = JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET });
+
+  const proxyReq = https.request({
+    hostname: 'open.feishu.cn',
+    path: '/open-apis/auth/v3/tenant_access_token/internal',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+    },
+  }, (proxyRes) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.writeHead(proxyRes.statusCode);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ code: -1, msg: 'Proxy error: ' + err.message }));
+  });
+
+  proxyReq.write(body);
+  proxyReq.end();
+}
+
+// ========== HTTP 服务 ==========
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url);
   const pathname = parsedUrl.pathname;
@@ -91,18 +148,32 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Check proxy routes
+  // --- 服务端获取 tenant token（密钥不经过前端） ---
+  if (pathname === '/api/internal/tenant-token' && req.method === 'POST') {
+    console.log('[internal] tenant-token request');
+    handleTenantToken(req, res);
+    return;
+  }
+
+  // --- 代理路由 ---
   for (const [prefix, target] of Object.entries(PROXY_ROUTES)) {
     if (pathname.startsWith(prefix)) {
       const rest = pathname.slice(prefix.length) + (parsedUrl.search || '');
       const targetUrl = target + rest;
       console.log(`[proxy] ${req.method} ${pathname} -> ${targetUrl}`);
-      proxyRequest(req, res, targetUrl);
+
+      // 对 AIHub 路由自动注入 API-KEY（前端不传）
+      let extraHeaders = null;
+      if (prefix.startsWith('/api/aihub') && GEMINI_API_KEY) {
+        extraHeaders = { 'API-KEY': GEMINI_API_KEY };
+      }
+
+      proxyRequest(req, res, targetUrl, extraHeaders);
       return;
     }
   }
 
-  // Static files
+  // --- 静态文件 ---
   let filePath = pathname === '/' ? '/index.html' : pathname;
   filePath = path.join(__dirname, filePath);
 
@@ -122,7 +193,11 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log('='.repeat(50));
-  console.log('  名片扫描助手 - 本地服务已启动');
+  console.log('  名片扫描助手 - 服务已启动');
   console.log(`  访问地址: http://localhost:${PORT}`);
+  console.log('  密钥状态:');
+  console.log(`    FEISHU_APP_ID:     ${FEISHU_APP_ID ? '✓ 已配置' : '✗ 未配置'}`);
+  console.log(`    FEISHU_APP_SECRET: ${FEISHU_APP_SECRET ? '✓ 已配置' : '✗ 未配置'}`);
+  console.log(`    GEMINI_API_KEY:    ${GEMINI_API_KEY ? '✓ 已配置' : '✗ 未配置'}`);
   console.log('='.repeat(50));
 });

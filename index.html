@@ -171,10 +171,7 @@ input:focus,select:focus{border-color:var(--primary)}
 const STORAGE_KEY = 'card_scanner_config';
 const TASKS_KEY = 'card_scanner_tasks';
 
-// Fixed credentials — no user input needed
-const FIXED_FEISHU_APP_ID = 'cli_a8937820f723d00e';
-const FIXED_FEISHU_APP_SECRET = 'PtKpHv0rJLw1kTGf49EvEhMnHtZWyS0P';
-const FIXED_GEMINI_KEY = 'e28200bc19cf436d984e8844ce194226';
+// Credentials are injected server-side — NOT exposed in frontend code
 const FIXED_AIHUB_ENV = 'prod';
 const FIXED_MODEL_ID = 'gemini-3-pro-preview';
 
@@ -190,10 +187,6 @@ const ENV_URLS = {
 function loadConfig() {
   let cfg;
   try { cfg = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { cfg = {}; }
-  // Always inject fixed values
-  cfg.feishuAppId = FIXED_FEISHU_APP_ID;
-  cfg.feishuAppSecret = FIXED_FEISHU_APP_SECRET;
-  cfg.geminiKey = FIXED_GEMINI_KEY;
   cfg.aihubEnv = FIXED_AIHUB_ENV;
   cfg.modelId = FIXED_MODEL_ID;
   return cfg;
@@ -254,8 +247,8 @@ function refreshStatus() {
   const c = loadConfig();
   const bar = document.getElementById('statusBar');
   const items = [];
-  items.push({t:'飞书凭证 ✓',cls:'chip-ok'});
-  items.push({t:'AI Key ✓',cls:'chip-ok'});
+  items.push({t:'飞书凭证 ✓ (服务端)',cls:'chip-ok'});
+  items.push({t:'AI Key ✓ (服务端)',cls:'chip-ok'});
   items.push(c.appToken && c.tableId ? {t:'多维表 ✓',cls:'chip-ok'} : {t:'多维表 ✗',cls:'chip-warn'});
   items.push({t:'环境: 生产', cls:'chip-info'});
   bar.innerHTML = items.map(i => `<span class="chip ${i.cls}">${i.t}</span>`).join('');
@@ -268,10 +261,10 @@ let tenantTokenExpire = 0;
 async function ensureTenantToken(forceRefresh = false) {
   const now = Date.now() / 1000;
   if (!forceRefresh && tenantToken && now < tenantTokenExpire) return;
-  const resp = await fetch(FEISHU_BASE + 'auth/v3/tenant_access_token/internal', {
+  // Call server-side endpoint — credentials never leave the server
+  const resp = await fetch('/api/internal/tenant-token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ app_id: FIXED_FEISHU_APP_ID, app_secret: FIXED_FEISHU_APP_SECRET }),
   });
   const data = await resp.json();
   if (data.code !== 0) throw new Error('获取 tenant_token 失败: ' + JSON.stringify(data));
@@ -369,7 +362,8 @@ async function callGemini(base64Image) {
     generationConfig: { temperature: 0.0, maxOutputTokens: 4096 }
   };
 
-  const headers = { 'Content-Type': 'application/json', 'API-KEY': c.geminiKey };
+  // API-KEY is injected by server proxy — not sent from frontend
+  const headers = { 'Content-Type': 'application/json' };
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
