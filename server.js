@@ -93,28 +93,38 @@ function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
     const status = proxyRes.statusCode;
     const elapsed = Date.now() - startTime;
 
-    // Collect response for logging (only for non-2xx or small responses)
+    // Build clean response headers: keep upstream content-type, force CORS
+    function buildHeaders() {
+      const h = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      };
+      // Forward safe upstream headers
+      const ct = proxyRes.headers['content-type'];
+      if (ct) h['Content-Type'] = ct;
+      const cl = proxyRes.headers['content-length'];
+      if (cl) h['Content-Length'] = cl;
+      return h;
+    }
+
     if (status >= 400) {
-      // Log error response body
+      // Log error response body, then return to client with CORS
       const chunks = [];
       proxyRes.on('data', c => chunks.push(c));
       proxyRes.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
         logErr(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
         logErr(`[resp body] ${body.slice(0, 1000)}`);
-        clientRes.setHeader('Access-Control-Allow-Origin', '*');
-        clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        clientRes.setHeader('Access-Control-Allow-Headers', '*');
-        clientRes.writeHead(status, proxyRes.headers);
-        clientRes.end(Buffer.concat(chunks));
+        const h = buildHeaders();
+        h['Content-Length'] = Buffer.byteLength(body);
+        clientRes.writeHead(status, h);
+        clientRes.end(body);
       });
     } else {
-      // Success: log status only, stream response
+      // Success: log and stream
       log(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
-      clientRes.setHeader('Access-Control-Allow-Origin', '*');
-      clientRes.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      clientRes.setHeader('Access-Control-Allow-Headers', '*');
-      clientRes.writeHead(status, proxyRes.headers);
+      clientRes.writeHead(status, buildHeaders());
       proxyRes.pipe(clientRes);
     }
   });
