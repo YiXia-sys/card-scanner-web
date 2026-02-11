@@ -141,7 +141,16 @@ input:focus,select:focus{border-color:var(--primary)}
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div class="card-title" style="margin:0">识别结果</div>
-      <button class="btn btn-danger btn-sm" onclick="clearTasks()">清空</button>
+      <div style="position:relative;display:inline-block" id="clearDropdown">
+        <button class="btn btn-danger btn-sm" onclick="toggleClearMenu()">清理 ▾</button>
+        <div id="clearMenu" class="hidden" style="position:absolute;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:100;min-width:140px;padding:4px 0">
+          <div style="padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap" onclick="clearByStatus('failed')" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">清理失败任务</div>
+          <div style="padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap" onclick="clearByStatus('completed')" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">清理已完成</div>
+          <div style="padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap" onclick="clearByStatus('pending')" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">清理排队中</div>
+          <div style="border-top:1px solid var(--border);margin:4px 0"></div>
+          <div style="padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--danger)" onclick="clearByStatus('all')" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background=''">清空全部</div>
+        </div>
+      </div>
     </div>
     <div class="tabs" id="filterTabs">
       <div class="tab active" onclick="setFilter('all')">全部</div>
@@ -694,6 +703,8 @@ async function processQueue() {
     const task = tasks[idx];
     task.status = 'processing';
     saveTasks(tasks); renderTasks(); refreshQueue();
+    // Yield to browser so UI can repaint before starting network request
+    await new Promise(r => setTimeout(r, 50));
 
     try {
       const imgData = await getTaskImageData(task.id, task.fileName);
@@ -704,6 +715,7 @@ async function processQueue() {
       task.cards = cards;
       task.status = 'uploading';
       const t2 = loadTasks(); Object.assign(t2.find(t=>t.id===task.id), task); saveTasks(t2); renderTasks(); refreshQueue();
+      await new Promise(r => setTimeout(r, 50));
 
       const c = loadConfig();
       const fileToken = await feishuUploadImage(file, c.appToken);
@@ -753,13 +765,35 @@ function setFilter(f) {
   renderTasks();
 }
 
-function clearTasks() {
-  if (!confirm('确认清空所有任务记录？')) return;
-  saveTasks([]);
-  clearAllImageData().catch(() => {});
+function toggleClearMenu() {
+  document.getElementById('clearMenu').classList.toggle('hidden');
+}
+// Close menu when clicking outside
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('clearDropdown');
+  if (dd && !dd.contains(e.target)) {
+    document.getElementById('clearMenu').classList.add('hidden');
+  }
+});
+
+function clearByStatus(status) {
+  document.getElementById('clearMenu').classList.add('hidden');
+  const labelMap = {failed:'失败',completed:'已完成',pending:'排队中',all:'全部'};
+  if (!confirm(`确认清理「${labelMap[status]}」任务？`)) return;
+  if (status === 'all') {
+    saveTasks([]);
+    clearAllImageData().catch(() => {});
+  } else {
+    const tasks = loadTasks();
+    const toRemove = tasks.filter(t => t.status === status);
+    const remaining = tasks.filter(t => t.status !== status);
+    // Clean images for removed tasks
+    toRemove.forEach(t => deleteImageData(t.id).catch(() => {}));
+    saveTasks(remaining);
+  }
   renderTasks();
   refreshQueue();
-  toast('已清空', 'ok');
+  toast(`已清理「${labelMap[status]}」任务`, 'ok');
 }
 
 function renderTasks() {
