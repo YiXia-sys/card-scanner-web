@@ -34,6 +34,7 @@ const PORT = process.env.PORT || 3200;
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const DOUBAO_API_KEY = process.env.DOUBAO_API_KEY || '';
 
 // Timestamped logging
 function ts() {
@@ -55,6 +56,11 @@ const MIME = {
 
 const PROXY_ROUTES = {
   '/api/feishu/': 'https://open.feishu.cn/open-apis/',
+  // 豆包 (Doubao) - OpenAI 兼容格式
+  '/api/doubao-prod/': 'https://ai-hub.xiaopeng.com/api/v1/',
+  '/api/doubao-pre/': 'https://ai-hub.deploy-test.xiaopeng.com/api/v1/',
+  '/api/doubao-test/': 'http://apisix-gw-ali-hd1.test.xiaopeng.com/xp-ai-hub-boot/api/v1/',
+  // Gemini (保留，暂不使用)
   '/api/aihub-prod/': 'https://ai-hub.xiaopeng.com/api/v1/beta/google/gemini/',
   '/api/aihub-pre/': 'https://ai-hub.deploy-test.xiaopeng.com/api/v1/beta/google/gemini/',
   '/api/aihub-test/': 'http://apisix-gw-ali-hd1.test.xiaopeng.com/xp-ai-hub-boot/api/v1/beta/google/gemini/',
@@ -85,7 +91,8 @@ function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
     const fwdHeaders = {};
     for (const [k, v] of Object.entries(clientReq.headers)) {
       const low = k.toLowerCase();
-      if (['host', 'origin', 'referer', 'connection', 'transfer-encoding'].includes(low)) continue;
+      // 去掉 accept-encoding：防止上游返回 gzip/br 压缩数据，proxy 无法正确转发给浏览器
+      if (['host', 'origin', 'referer', 'connection', 'transfer-encoding', 'accept-encoding'].includes(low)) continue;
       fwdHeaders[k] = v;
     }
     fwdHeaders['host'] = parsed.host;
@@ -108,17 +115,24 @@ function proxyRequest(clientReq, clientRes, targetUrl, extraHeaders) {
         const elapsed = Date.now() - startTime;
         const status = proxyRes.statusCode;
 
+        const encoding = proxyRes.headers['content-encoding'] || 'none';
         if (status >= 400) {
-          logErr(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+          logErr(`[resp] ${status} ${elapsed}ms enc=${encoding} ${targetUrl}`);
           logErr(`[resp body] ${resBody.toString('utf8').slice(0, 1000)}`);
         } else {
-          log(`[resp] ${status} ${elapsed}ms ${targetUrl}`);
+          // 飞书请求也打印 body 前 300 字，方便排查"返回 200 但内容异常"的问题
+          const isFeishu = targetUrl.includes('feishu.cn');
+          const bodyPreview = isFeishu ? ` | body: ${resBody.toString('utf8').slice(0, 300)}` : '';
+          log(`[resp] ${status} ${elapsed}ms enc=${encoding} ${targetUrl}${bodyPreview}`);
         }
 
         // 4. Return to browser with clean headers
         const h = { ...corsHeaders };
-        const ct = proxyRes.headers['content-type'];
-        if (ct) h['Content-Type'] = ct;
+        // 转发关键响应头（Content-Type, Content-Encoding, Content-Disposition 等）
+        const forwardHeaders = ['content-type', 'content-encoding', 'content-disposition'];
+        for (const fh of forwardHeaders) {
+          if (proxyRes.headers[fh]) h[fh] = proxyRes.headers[fh];
+        }
         h['Content-Length'] = resBody.length;
         clientRes.writeHead(status, h);
         clientRes.end(resBody);
@@ -215,9 +229,11 @@ const server = http.createServer((req, res) => {
       const targetUrl = target + rest;
       log(`[proxy] ${req.method} ${pathname} -> ${targetUrl}`);
 
-      // 对 AIHub 路由自动注入 API-KEY（前端不传）
+      // 对 AIHub / Doubao 路由自动注入 API-KEY（前端不传）
       let extraHeaders = null;
-      if (prefix.startsWith('/api/aihub') && GEMINI_API_KEY) {
+      if (prefix.startsWith('/api/doubao') && DOUBAO_API_KEY) {
+        extraHeaders = { 'API-KEY': DOUBAO_API_KEY };
+      } else if (prefix.startsWith('/api/aihub') && GEMINI_API_KEY) {
         extraHeaders = { 'API-KEY': GEMINI_API_KEY };
       }
 
@@ -258,6 +274,7 @@ server.listen(PORT, () => {
   log('  密钥状态:');
   log(`    FEISHU_APP_ID:     ${FEISHU_APP_ID ? '✓ 已配置' : '✗ 未配置'}`);
   log(`    FEISHU_APP_SECRET: ${FEISHU_APP_SECRET ? '✓ 已配置' : '✗ 未配置'}`);
-  log(`    GEMINI_API_KEY:    ${GEMINI_API_KEY ? '✓ 已配置' : '✗ 未配置'}`);
+  log(`    DOUBAO_API_KEY:    ${DOUBAO_API_KEY ? '✓ 已配置' : '✗ 未配置'}`);
+  log(`    GEMINI_API_KEY:    ${GEMINI_API_KEY ? '✓ 已配置' : '✗ 未配置 (Gemini备用)'}`);
   log('='.repeat(50));
 });

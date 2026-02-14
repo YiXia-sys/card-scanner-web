@@ -69,6 +69,16 @@ input:focus,select:focus{border-color:var(--primary)}
 .toast-info{background:#6366f1}
 .flex-center{display:flex;align-items:center;gap:8px}
 @media(max-width:480px){.container{padding:10px}}
+.toggle-track{position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;vertical-align:middle}
+.toggle-track input{display:none}
+.toggle-track .track{position:absolute;inset:0;background:#cbd5e1;border-radius:12px;transition:.3s}
+.toggle-track input:checked+.track{background:var(--primary)}
+.toggle-track .thumb{position:absolute;left:2px;top:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.3s;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.toggle-track input:checked~.thumb{left:22px}
+.dual-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dual-grid .upload-area{padding:16px}
+.dual-grid .upload-area .icon{font-size:28px}
+.staging-info{text-align:center;font-size:12px;color:var(--text2);margin-top:4px}
 </style>
 </head>
 <body>
@@ -93,6 +103,10 @@ input:focus,select:focus{border-color:var(--primary)}
 
   <!-- Settings Panel -->
   <div class="card hidden" id="settingsPanel">
+    <div class="card-title">AI 模型</div>
+    <div style="margin-bottom:12px">
+      <select id="aiModelSelect" onchange="onAiModelChange(this.value)" style="width:100%"></select>
+    </div>
     <div class="card-title">飞书多维表配置</div>
     <div style="margin-bottom:12px">
       <label>多维表链接</label>
@@ -111,22 +125,56 @@ input:focus,select:focus{border-color:var(--primary)}
 
   <!-- Upload Area -->
   <div class="card">
-    <div class="upload-area" id="uploadArea" onclick="document.getElementById('galleryInput').click()">
-      <div class="icon">📸</div>
-      <p>点击上传名片照片，或拖拽到此处</p>
-      <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，可多选</p>
+    <!-- 双面名片开关 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span style="font-size:13px;font-weight:500">双面名片模式 <span style="font-size:11px;color:var(--text2)">(中英文自动匹配合并)</span></span>
+      <label class="toggle-track">
+        <input type="checkbox" id="dualModeToggle" onchange="toggleDualMode(this.checked)">
+        <span class="track"></span>
+        <span class="thumb"></span>
+      </label>
     </div>
-    <!-- 拍照（iOS 直接打开相机） -->
-    <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden" onchange="handleFiles(this.files)">
-    <!-- 相册选择（不带 capture，iOS 弹出相册） -->
-    <input type="file" id="galleryInput" accept="image/*" multiple class="hidden" onchange="handleFiles(this.files)">
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-primary btn-lg" style="flex:1" onclick="document.getElementById('cameraInput').click()">
-        📷 拍照
-      </button>
-      <button class="btn btn-outline btn-lg" style="flex:1" onclick="document.getElementById('galleryInput').click()">
-        🖼️ 从相册选择
-      </button>
+
+    <!-- 单面模式 -->
+    <div id="singleUpload">
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('galleryInput').click()">
+        <div class="icon">📸</div>
+        <p>点击上传名片照片，或拖拽到此处</p>
+        <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，可多选</p>
+      </div>
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden" onchange="handleFiles(this.files)">
+      <input type="file" id="galleryInput" accept="image/*" multiple class="hidden" onchange="handleFiles(this.files)">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-primary btn-lg" style="flex:1" onclick="document.getElementById('cameraInput').click()">📷 拍照</button>
+        <button class="btn btn-outline btn-lg" style="flex:1" onclick="document.getElementById('galleryInput').click()">🖼️ 从相册选择</button>
+      </div>
+    </div>
+
+    <!-- 双面模式 -->
+    <div id="dualUpload" class="hidden">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:8px">分别上传名片正面（中文）和背面（英文），系统自动按电话/邮箱匹配并合并</p>
+      <div class="dual-grid">
+        <div>
+          <div class="upload-area" onclick="document.getElementById('dualFrontInput').click()">
+            <div class="icon">📇</div>
+            <p style="font-size:13px;font-weight:500">正面（中文）</p>
+          </div>
+          <div class="staging-info" id="frontCount">已选 0 张</div>
+        </div>
+        <div>
+          <div class="upload-area" onclick="document.getElementById('dualBackInput').click()">
+            <div class="icon">🔄</div>
+            <p style="font-size:13px;font-weight:500">背面（英文）</p>
+          </div>
+          <div class="staging-info" id="backCount">已选 0 张</div>
+        </div>
+      </div>
+      <input type="file" id="dualFrontInput" accept="image/*" multiple class="hidden" onchange="handleDualFiles('front', this.files)">
+      <input type="file" id="dualBackInput" accept="image/*" multiple class="hidden" onchange="handleDualFiles('back', this.files)">
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary btn-lg" style="flex:1" id="dualProcessBtn" onclick="startDualProcess()" disabled>开始处理双面名片</button>
+        <button class="btn btn-outline btn-sm" onclick="clearDualStaging()" style="flex-shrink:0">清空</button>
+      </div>
     </div>
   </div>
 
@@ -182,12 +230,23 @@ const TASKS_KEY = 'card_scanner_tasks';
 
 // Credentials are injected server-side — NOT exposed in frontend code
 const FIXED_AIHUB_ENV = 'prod';
-const FIXED_MODEL_ID = 'gemini-3-pro-preview';
+
+// AI 模型配置
+const AI_MODELS = {
+  doubao: { label: '豆包 Doubao-Seed-1.8', modelId: 'doubao-seed-1.8', provider: 'doubao' },
+  gemini: { label: 'Gemini 3 Pro', modelId: 'gemini-3-pro-preview', provider: 'gemini' },
+};
+const DEFAULT_AI_MODEL = 'doubao';
 
 // When running via local proxy (server.js), API calls go through /api/... to avoid CORS.
 const PROXY_BASE = location.protocol === 'file:' ? '' : '';
 const FEISHU_BASE = '/api/feishu/';
-const ENV_URLS = {
+const DOUBAO_URLS = {
+  prod: '/api/doubao-prod/',
+  pre: '/api/doubao-pre/',
+  test: '/api/doubao-test/',
+};
+const GEMINI_URLS = {
   prod: '/api/aihub-prod/',
   pre: '/api/aihub-pre/',
   test: '/api/aihub-test/',
@@ -197,7 +256,7 @@ function loadConfig() {
   let cfg;
   try { cfg = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { cfg = {}; }
   cfg.aihubEnv = FIXED_AIHUB_ENV;
-  cfg.modelId = FIXED_MODEL_ID;
+  if (!cfg.aiModel || !AI_MODELS[cfg.aiModel]) cfg.aiModel = DEFAULT_AI_MODEL;
   return cfg;
 }
 function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
@@ -315,7 +374,18 @@ async function feishuPost(url, body, isFormData = false) {
     headers['Authorization'] = 'Bearer ' + tenantToken;
     resp = await safeFetch(url, {method:'POST', headers, body: isFormData ? body : JSON.stringify(body)});
   }
-  const data = await resp.json();
+  // 安全解析 JSON：如果响应不是 JSON（如 gzip 乱码、HTML 错误页），给出可读报错
+  let data;
+  const rawText = await resp.text();
+  try {
+    data = JSON.parse(rawText);
+  } catch (parseErr) {
+    const preview = rawText.slice(0, 300);
+    throw makeApiError(
+      `飞书接口返回了非 JSON 数据 (HTTP ${resp.status})，可能是网络/代理异常`,
+      `HTTP ${resp.status} | URL: ${url} | Parse error: ${parseErr.message} | Body preview: ${preview}`
+    );
+  }
   if (!resp.ok && resp.status >= 400) throw makeApiError(`飞书接口错误 (${resp.status})`, `HTTP ${resp.status} | URL: ${url} | Body: ${JSON.stringify(data).slice(0,500)}`);
   return data;
 }
@@ -352,7 +422,7 @@ async function initBitableTable() {
         name: '名片数据', default_view_name: '表格视图',
         fields: [
           {field_name:'姓名',type:1,ui_type:'Text'},
-          {field_name:'电话',type:13,ui_type:'Phone'},
+          {field_name:'电话',type:1,ui_type:'Text'},
           {field_name:'公司',type:1,ui_type:'Text'},
           {field_name:'职位',type:1,ui_type:'Text'},
           {field_name:'邮箱',type:1,ui_type:'Text'},
@@ -374,91 +444,186 @@ async function initBitableTable() {
   } catch (e) { toast('初始化失败: ' + e.message, 'err'); }
 }
 
-// ========== Gemini API ==========
-async function callGemini(base64Image) {
+// ========== AI 模型切换 ==========
+function onAiModelChange(key) {
   const c = loadConfig();
-  const env = c.aihubEnv || 'prod';
-  const baseUrl = ENV_URLS[env] || ENV_URLS.prod;
-  const model = c.modelId || 'gemini-3-pro-preview';
-  const url = `${baseUrl}${model}:generateContent`;
+  c.aiModel = key;
+  saveConfig(c);
+  toast('已切换到: ' + AI_MODELS[key].label, 'ok');
+}
 
-  const prompt = `你是一名专业的名片结构化解析引擎。请识别图片中的全部名片并输出结构化 JSON。
+function initModelSelector() {
+  const sel = document.getElementById('aiModelSelect');
+  if (!sel) return;
+  const c = loadConfig();
+  sel.innerHTML = Object.entries(AI_MODELS).map(([k, v]) =>
+    `<option value="${k}" ${k === c.aiModel ? 'selected' : ''}>${v.label}</option>`
+  ).join('');
+}
+
+const CARD_PROMPT = `你是一名专业的名片结构化解析引擎。请识别图片中的全部名片并输出结构化 JSON。
 仅输出 JSON 数组，不要 Markdown，不要解释。
 字段固定：name, phone, company, title, email, address, remark。
 缺失字段用空字符串。`;
 
+const CARD_PROMPT_SHORT = '识别图片中所有名片，返回 JSON 数组，每项包含 name,phone,company,title,email,address,remark。仅输出 JSON，不要解释。缺失字段用空字符串。';
+
+// 统一入口：根据配置选择模型
+async function callGemini(base64Image) {
+  const c = loadConfig();
+  const modelKey = c.aiModel || DEFAULT_AI_MODEL;
+  const modelCfg = AI_MODELS[modelKey];
+  if (modelCfg.provider === 'gemini') return callGeminiProvider(base64Image, c);
+  return callDoubaoProvider(base64Image, c);
+}
+
+// ========== Doubao (豆包) — OpenAI chat/completions 兼容格式 ==========
+async function callDoubaoProvider(base64Image, c) {
+  const env = c.aihubEnv || 'prod';
+  const baseUrl = DOUBAO_URLS[env] || DOUBAO_URLS.prod;
+  const model = AI_MODELS.doubao.modelId;
+  const url = `${baseUrl}chat/completions`;
+
   const body = {
-    contents: [{ role: 'user', parts: [
-      { text: prompt },
-      { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
-    ]}],
-    generationConfig: { temperature: 0.0, maxOutputTokens: 4096 }
+    model: model,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: CARD_PROMPT },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+      ]
+    }],
+    temperature: 0.0,
+    max_tokens: 4096,
+    stream: false
   };
 
-  // API-KEY is injected by server proxy — not sent from frontend
   const headers = { 'Content-Type': 'application/json' };
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const resp = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
-      // HTTP-level errors: fail fast, no retry
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        const raw = `HTTP ${resp.status} | URL: ${url} | Body: ${errText.slice(0, 500)}`;
-        let msg = `AI 服务 HTTP ${resp.status}`;
-        if (resp.status === 403) msg = 'AI 服务拒绝访问 (403)，请确认网络环境可访问 AIHub';
-        if (resp.status === 401) msg = 'AI 服务鉴权失败 (401)，请检查 API-KEY';
-        const err = makeApiError(msg, raw);
-        err._noRetry = true;
-        throw err;
-      }
+      if (!resp.ok) { await throwHttpError(resp, url); }
       const data = await resp.json();
-      const code = data.code;
-      if (code === 61100001 || String(code) === '61100001') {
-        lastError = new Error('AIHub 暂时不可用，重试中...');
-        lastError._canRetry = true;
-        await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
-        continue;
-      }
-      if (code !== undefined && code !== null && code !== 0) {
-        const err = makeApiError(`AIHub error: code=${code}`, `code=${code}, msg=${data.msg}`);
-        err._noRetry = true;
-        throw err;
-      }
+      checkAihubError(data);
 
-      let candidates = data.candidates || (data.data && data.data.candidates);
-      let rawText = extractText(candidates);
+      let rawText = extractDoubaoText(data);
 
-      // MAX_TOKENS retry: either no text at all, or finishReason is MAX_TOKENS
-      const finishReason = candidates && candidates[0] ? (candidates[0].finishReason || '') : '';
-      if (finishReason === 'MAX_TOKENS' || (!rawText && candidates && candidates.length)) {
-        body.generationConfig.maxOutputTokens = 8192;
-        body.contents[0].parts[0].text = '识别图片中所有名片，返回 JSON 数组，每项包含 name,phone,company,title,email,address,remark。仅输出 JSON，不要解释。缺失字段用空字符串。';
+      const finishReason = data.choices && data.choices[0] ? (data.choices[0].finish_reason || '') : '';
+      if (finishReason === 'length' || (!rawText && data.choices && data.choices.length)) {
+        body.max_tokens = 8192;
+        body.messages[0].content[0].text = CARD_PROMPT_SHORT;
         const resp2 = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
         const data2 = await resp2.json();
-        const candidates2 = data2.candidates || (data2.data && data2.data.candidates);
-        const rawText2 = extractText(candidates2);
-        if (rawText2) rawText = rawText2; // prefer retry result if available
+        const rawText2 = extractDoubaoText(data2);
+        if (rawText2) rawText = rawText2;
       }
 
       if (!rawText) throw new Error('模型未返回文本内容');
       return parseCards(rawText);
-    } catch (e) { lastError = e; break; /* Only AIHub 61100001 uses continue to retry; all other errors break immediately */ }
+    } catch (e) {
+      lastError = e;
+      if (e._canRetry) { await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt))); continue; }
+      break;
+    }
   }
   throw lastError;
 }
 
-function extractText(candidates) {
+function extractDoubaoText(data) {
+  if (data.choices && data.choices.length) {
+    const msg = data.choices[0].message;
+    if (msg && msg.content && msg.content.trim()) return msg.content;
+  }
+  return null;
+}
+
+// ========== Gemini — Google generateContent 格式 ==========
+async function callGeminiProvider(base64Image, c) {
+  const env = c.aihubEnv || 'prod';
+  const baseUrl = GEMINI_URLS[env] || GEMINI_URLS.prod;
+  const model = AI_MODELS.gemini.modelId;
+  const url = `${baseUrl}${model}:generateContent`;
+
+  const body = {
+    contents: [{ role: 'user', parts: [
+      { text: CARD_PROMPT },
+      { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
+    ]}],
+    generationConfig: { temperature: 0.0, maxOutputTokens: 4096 }
+  };
+
+  const headers = { 'Content-Type': 'application/json' };
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+      if (!resp.ok) { await throwHttpError(resp, url); }
+      const data = await resp.json();
+      checkAihubError(data);
+
+      let candidates = data.candidates || (data.data && data.data.candidates);
+      let rawText = extractGeminiText(candidates);
+
+      const finishReason = candidates && candidates[0] ? (candidates[0].finishReason || '') : '';
+      if (finishReason === 'MAX_TOKENS' || (!rawText && candidates && candidates.length)) {
+        body.generationConfig.maxOutputTokens = 8192;
+        body.contents[0].parts[0].text = CARD_PROMPT_SHORT;
+        const resp2 = await safeFetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+        const data2 = await resp2.json();
+        const candidates2 = data2.candidates || (data2.data && data2.data.candidates);
+        const rawText2 = extractGeminiText(candidates2);
+        if (rawText2) rawText = rawText2;
+      }
+
+      if (!rawText) throw new Error('模型未返回文本内容');
+      return parseCards(rawText);
+    } catch (e) {
+      lastError = e;
+      if (e._canRetry) { await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt))); continue; }
+      break;
+    }
+  }
+  throw lastError;
+}
+
+function extractGeminiText(candidates) {
   if (!candidates || !candidates.length) return null;
   for (const c of candidates) {
     if (c.content && c.content.parts) {
       for (const p of c.content.parts) {
-        if (p.text && p.text.trim()) return p.text;
+        if (p.text && p.text.trim() && !p.thought) return p.text;
       }
     }
     if (c.text && c.text.trim()) return c.text;
   }
   return null;
+}
+
+// ========== 共用：HTTP 错误 & AIHub 网关错误处理 ==========
+async function throwHttpError(resp, url) {
+  const errText = await resp.text().catch(() => '');
+  const raw = `HTTP ${resp.status} | URL: ${url} | Body: ${errText.slice(0, 500)}`;
+  let msg = `AI 服务 HTTP ${resp.status}`;
+  if (resp.status === 403) msg = 'AI 服务拒绝访问 (403)，请确认网络环境可访问 AIHub';
+  if (resp.status === 401) msg = 'AI 服务鉴权失败 (401)，请检查 API-KEY';
+  const err = makeApiError(msg, raw);
+  err._noRetry = true;
+  throw err;
+}
+
+function checkAihubError(data) {
+  const code = data.code;
+  if (code === 61100001 || String(code) === '61100001') {
+    const err = new Error('AIHub 暂时不可用，重试中...');
+    err._canRetry = true;
+    throw err;
+  }
+  if (code !== undefined && code !== null && code !== 0) {
+    const err = makeApiError(`AIHub error: code=${code}`, `code=${code}, msg=${data.msg}`);
+    err._noRetry = true;
+    throw err;
+  }
 }
 
 function parseCards(rawText) {
@@ -656,7 +821,11 @@ async function evictOldImages() {
     tasks.filter(t => t.status !== 'completed').map(t => String(t.id))
   );
   // Delete images for completed tasks first, then oldest
-  const toDelete = keys.filter(k => !neededIds.has(k));
+  // dual 任务图片键格式为 "id_f0"/"id_b0"，匹配基础 ID
+  const toDelete = keys.filter(k => {
+    const baseId = String(k).split('_')[0];
+    return !neededIds.has(String(k)) && !neededIds.has(baseId);
+  });
   const extra = count - MAX_CACHED_IMAGES;
   const deleteBatch = toDelete.slice(0, Math.max(extra, 0));
   for (const k of deleteBatch) {
@@ -731,7 +900,7 @@ async function processQueue() {
   processing = true;
   while (true) {
     const tasks = loadTasks();
-    const idx = tasks.findIndex(t => t.status === 'pending');
+    const idx = tasks.findIndex(t => t.status === 'pending' && t.type !== 'dual');
     if (idx < 0) break;
     const task = tasks[idx];
     task.status = 'processing';
@@ -754,7 +923,7 @@ async function processQueue() {
       const fileToken = await feishuUploadImage(file, c.appToken);
       const records = cards.map(card => ({
         '姓名': (card.name||'').trim(),
-        '电话': (card.phone||'').trim(),
+        '电话': formatPhone(card.phone),
         '公司': (card.company||'').trim(),
         '职位': (card.title||'').trim(),
         '邮箱': (card.email||'').trim(),
@@ -821,8 +990,8 @@ function clearByStatus(status) {
     const tasks = loadTasks();
     const toRemove = tasks.filter(t => t.status === status);
     const remaining = tasks.filter(t => t.status !== status);
-    // Clean images for removed tasks
-    toRemove.forEach(t => deleteImageData(t.id).catch(() => {}));
+    // Clean images for removed tasks (支持 dual 任务的多图片键)
+    toRemove.forEach(t => deleteTaskImages(t));
     saveTasks(remaining);
   }
   renderTasks();
@@ -845,11 +1014,13 @@ function renderTasks() {
   el.innerHTML = filtered.map(task => {
     const statusMap = {pending:'排队中',processing:'识别中',uploading:'上传中',completed:'已完成',failed:'失败'};
     const colorMap = {pending:'var(--warn)',processing:'var(--primary)',uploading:'var(--primary)',completed:'var(--success)',failed:'var(--danger)'};
+    const statusText = task.statusDetail || statusMap[task.status] || task.status;
+    const isDual = task.type === 'dual';
     const cards = task.cards || [];
     let cardsHtml = '';
     if (cards.length) {
       cardsHtml = `<details class="task-details">
-        <summary>查看识别结果（${cards.length} 张名片）</summary>
+        <summary>查看识别结果（${cards.length} 张名片${isDual ? '，已合并中英文' : ''}）</summary>
         <div class="task-cards"><table>
           <tr><th>姓名</th><th>公司</th><th>职位</th><th>电话</th><th>邮箱</th></tr>
           ${cards.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.company)}</td><td>${esc(c.title)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td></tr>`).join('')}
@@ -860,31 +1031,37 @@ function renderTasks() {
       <span style="flex:1">❌ ${esc(task.error)}</span>
       <button class="btn btn-sm" style="flex-shrink:0;padding:2px 8px;font-size:11px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="copyError(this)" data-err="${esc(task.errorRaw || task.error).replace(/"/g,'&quot;')}">复制</button>
     </div>` : '';
-    // Retry buttons: different actions depending on what failed
+    // Retry buttons: different actions depending on task type and what failed
     let retryHtml = '';
     if (task.status === 'failed') {
       const hasCards = task.cards && task.cards.length;
-      // "Re-select file" only needed when retrying recognition (needs image)
-      const reselectBtn = `<button class="btn btn-sm" style="background:#f1f5f9;color:var(--text2);border:1px solid var(--border)" onclick="reSelectFile(${task.id})">📂 重新选择文件</button>`;
-      if (hasCards) {
-        // Recognition succeeded, only Feishu write failed → no need to re-select file
-        retryHtml = `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-          <button class="btn btn-outline btn-sm" onclick="retryWrite(${task.id})">🔄 重试写入飞书</button>
-          <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别+写入</button>
-        </div>`;
+      if (isDual) {
+        retryHtml = hasCards
+          ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="retryDualWrite(${task.id})">🔄 重试写入飞书</button>
+              <button class="btn btn-outline btn-sm" onclick="retryDual(${task.id})">🔁 重新处理</button>
+            </div>`
+          : `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="retryDual(${task.id})">🔁 重新处理</button>
+            </div>`;
       } else {
-        // Recognition failed → needs image to retry, show re-select button
-        retryHtml = `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-          <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别</button>
-          ${reselectBtn}
-        </div>`;
+        const reselectBtn = `<button class="btn btn-sm" style="background:#f1f5f9;color:var(--text2);border:1px solid var(--border)" onclick="reSelectFile(${task.id})">📂 重新选择文件</button>`;
+        retryHtml = hasCards
+          ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="retryWrite(${task.id})">🔄 重试写入飞书</button>
+              <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别+写入</button>
+            </div>`
+          : `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="retryAll(${task.id})">🔁 重新识别</button>
+              ${reselectBtn}
+            </div>`;
       }
     }
 
     return `<div class="task-item fade-in">
       <div class="task-header">
-        <span style="font-size:13px;font-weight:500">${esc(task.fileName)}</span>
-        <span class="task-status" style="color:${colorMap[task.status]}">${statusMap[task.status]}</span>
+        <span style="font-size:13px;font-weight:500">${isDual ? '📑 ' : ''}${esc(task.fileName)}</span>
+        <span class="task-status" style="color:${colorMap[task.status]}">${statusText}</span>
       </div>
       <div style="font-size:11px;color:var(--text2)">${task.createdAt} · 名片数: ${cards.length}</div>
       ${cardsHtml}${errorHtml}${retryHtml}
@@ -910,7 +1087,7 @@ async function retryWrite(taskId) {
     const records = task.cards.map(card => {
       const r = {
         '姓名': (card.name||'').trim(),
-        '电话': (card.phone||'').trim(),
+        '电话': formatPhone(card.phone),
         '公司': (card.company||'').trim(),
         '职位': (card.title||'').trim(),
         '邮箱': (card.email||'').trim(),
@@ -957,7 +1134,7 @@ async function retryAll(taskId) {
     const fileToken = await feishuUploadImage(file, c.appToken);
     const records = cards.map(card => ({
       '姓名': (card.name||'').trim(),
-      '电话': (card.phone||'').trim(),
+      '电话': formatPhone(card.phone),
       '公司': (card.company||'').trim(),
       '职位': (card.title||'').trim(),
       '邮箱': (card.email||'').trim(),
@@ -976,6 +1153,12 @@ async function retryAll(taskId) {
     toast('重试失败: ' + task.error, 'err');
   }
   const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===taskId)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
+}
+
+// 多个电话号码用换行分隔（替代逗号），在飞书文本字段中更清晰
+function formatPhone(raw) {
+  if (!raw) return '';
+  return raw.split(/[,，\/;；|]+/).map(s => s.trim()).filter(Boolean).join('\n');
 }
 
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -1000,8 +1183,354 @@ function copyError(btn) {
   }
 }
 
+// ========== 双面名片模式 ==========
+let dualStaging = { front: [], back: [] }; // [{fileName, dataUrl}]
+
+function toggleDualMode(on) {
+  document.getElementById('singleUpload').classList.toggle('hidden', on);
+  document.getElementById('dualUpload').classList.toggle('hidden', !on);
+  const c = loadConfig();
+  c.dualMode = !!on;
+  saveConfig(c);
+}
+
+function initDualMode() {
+  const c = loadConfig();
+  const on = !!c.dualMode;
+  const toggle = document.getElementById('dualModeToggle');
+  if (toggle) toggle.checked = on;
+  document.getElementById('singleUpload').classList.toggle('hidden', on);
+  document.getElementById('dualUpload').classList.toggle('hidden', !on);
+}
+
+async function handleDualFiles(side, files) {
+  if (!files || !files.length) return;
+  for (const file of files) {
+    const dataUrl = await fileToDataUrl(file);
+    dualStaging[side].push({ fileName: file.name, dataUrl });
+  }
+  updateDualUI();
+}
+
+function updateDualUI() {
+  document.getElementById('frontCount').textContent = `已选 ${dualStaging.front.length} 张`;
+  document.getElementById('backCount').textContent = `已选 ${dualStaging.back.length} 张`;
+  const btn = document.getElementById('dualProcessBtn');
+  if (btn) btn.disabled = !(dualStaging.front.length > 0 && dualStaging.back.length > 0);
+}
+
+function clearDualStaging() {
+  dualStaging = { front: [], back: [] };
+  updateDualUI();
+  // 重置 file input，确保同一文件能再次选择
+  const fi = document.getElementById('dualFrontInput');
+  const bi = document.getElementById('dualBackInput');
+  if (fi) fi.value = '';
+  if (bi) bi.value = '';
+  toast('已清空', 'info');
+}
+
+// 删除某个任务的全部图片（支持 dual 和 single）
+function deleteTaskImages(task) {
+  if (task.type === 'dual') {
+    for (let i = 0; i < (task.frontCount || 0); i++) deleteImageData(`${task.id}_f${i}`).catch(() => {});
+    for (let i = 0; i < (task.backCount || 0); i++) deleteImageData(`${task.id}_b${i}`).catch(() => {});
+  } else {
+    deleteImageData(task.id).catch(() => {});
+  }
+}
+
+// ---- 启动双面处理 ----
+async function startDualProcess() {
+  const c = loadConfig();
+  if (!c.appToken || !c.tableId) { toast('请先解析多维表链接并初始化表格', 'err'); toggleSettings(); return; }
+  if (!dualStaging.front.length || !dualStaging.back.length) { toast('请同时上传正面和背面图片', 'err'); return; }
+
+  const taskId = Date.now() + Math.random();
+  const frontImages = [...dualStaging.front];
+  const backImages = [...dualStaging.back];
+
+  // 保存图片到 IndexedDB
+  for (let i = 0; i < frontImages.length; i++) {
+    await saveImageData(`${taskId}_f${i}`, frontImages[i].dataUrl);
+  }
+  for (let i = 0; i < backImages.length; i++) {
+    await saveImageData(`${taskId}_b${i}`, backImages[i].dataUrl);
+  }
+
+  // 创建任务
+  const tasks = loadTasks();
+  tasks.unshift({
+    id: taskId,
+    type: 'dual',
+    fileName: `双面处理 (正${frontImages.length}张 + 反${backImages.length}张)`,
+    status: 'pending',
+    frontCount: frontImages.length,
+    backCount: backImages.length,
+    cards: null,
+    error: null,
+    errorRaw: null,
+    statusDetail: null,
+    createdAt: new Date().toLocaleString(),
+  });
+  saveTasks(tasks);
+  renderTasks();
+  refreshQueue();
+  clearDualStaging();
+
+  // 开始处理
+  processDualTask(taskId);
+}
+
+// ---- 双面处理主逻辑 ----
+async function processDualTask(taskId) {
+  if (processing) { toast('有其他任务正在处理，请稍候', 'info'); return; }
+  processing = true;
+
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) { processing = false; return; }
+
+  task.status = 'processing';
+  task.error = null;
+  task.statusDetail = '准备中...';
+  saveTasks(tasks); renderTasks(); refreshQueue();
+  await new Promise(r => setTimeout(r, 50));
+
+  try {
+    // 1. 识别正面（中文）
+    const allFrontCards = [];
+    for (let i = 0; i < task.frontCount; i++) {
+      updateDualTaskStatus(taskId, `正面识别 ${i + 1}/${task.frontCount}`);
+      const dataUrl = await getImageData(`${taskId}_f${i}`);
+      if (!dataUrl) throw new Error(`正面图片 ${i + 1} 缓存丢失`);
+      const cards = await callGemini(dataUrlToBase64(dataUrl));
+      allFrontCards.push(...cards);
+    }
+
+    // 2. 识别背面（英文）
+    const allBackCards = [];
+    for (let i = 0; i < task.backCount; i++) {
+      updateDualTaskStatus(taskId, `背面识别 ${i + 1}/${task.backCount}`);
+      const dataUrl = await getImageData(`${taskId}_b${i}`);
+      if (!dataUrl) throw new Error(`背面图片 ${i + 1} 缓存丢失`);
+      const cards = await callGemini(dataUrlToBase64(dataUrl));
+      allBackCards.push(...cards);
+    }
+
+    // 3. 匹配 + 合并
+    updateDualTaskStatus(taskId, '匹配合并中...');
+    const mergedCards = matchAndMergeCards(allFrontCards, allBackCards);
+
+    // 更新 task
+    const t2 = loadTasks(); const task2 = t2.find(x => x.id === taskId);
+    task2.cards = mergedCards;
+    task2.status = 'uploading';
+    task2.statusDetail = '写入飞书中...';
+    saveTasks(t2); renderTasks(); refreshQueue();
+    await new Promise(r => setTimeout(r, 50));
+
+    // 4. 上传图片 + 写入飞书
+    const cfg = loadConfig();
+    const fileTokens = [];
+    // 上传正面第一张和背面第一张作为来源图片
+    for (const key of [`${taskId}_f0`, `${taskId}_b0`]) {
+      const du = await getImageData(key);
+      if (du) {
+        const file = dataUrlToFile(du, key.includes('_f') ? 'front.jpg' : 'back.jpg');
+        try { fileTokens.push(await feishuUploadImage(file, cfg.appToken)); } catch (_) {}
+      }
+    }
+    const attachment = fileTokens.map(ft => ({ file_token: ft }));
+    const records = mergedCards.map(card => {
+      const r = {
+        '姓名': (card.name || '').trim(),
+        '电话': (card.phone || '').trim(),
+        '公司': (card.company || '').trim(),
+        '职位': (card.title || '').trim(),
+        '邮箱': (card.email || '').trim(),
+        '地址': (card.address || '').trim(),
+      };
+      if (attachment.length) r['来源图片'] = attachment;
+      return r;
+    });
+    await feishuAddRecords(cfg.appToken, cfg.tableId, records);
+
+    // 5. 完成
+    const t3 = loadTasks(); const task3 = t3.find(x => x.id === taskId);
+    task3.status = 'completed';
+    task3.error = null;
+    task3.statusDetail = null;
+    saveTasks(t3); renderTasks(); refreshQueue();
+    deleteTaskImages(task3);
+    toast(`双面处理完成，共 ${mergedCards.length} 张名片`, 'ok');
+
+  } catch (e) {
+    const t3 = loadTasks(); const task3 = t3.find(x => x.id === taskId);
+    if (task3) {
+      task3.status = 'failed';
+      task3.error = e.message || String(e);
+      task3.errorRaw = e.rawDetail || e.message || String(e);
+      task3.statusDetail = null;
+      saveTasks(t3); renderTasks(); refreshQueue();
+    }
+    toast('双面处理失败: ' + e.message, 'err');
+  }
+
+  processing = false;
+  processQueue(); // 继续处理单面队列中的任务
+}
+
+function updateDualTaskStatus(taskId, detail) {
+  const t = loadTasks();
+  const tt = t.find(x => x.id === taskId);
+  if (tt) { tt.statusDetail = detail; saveTasks(t); renderTasks(); }
+}
+
+// ---- 双面任务重试 ----
+async function retryDual(taskId) {
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) { toast('任务不存在', 'err'); return; }
+  task.status = 'pending';
+  task.error = null;
+  task.errorRaw = null;
+  task.cards = null;
+  task.statusDetail = null;
+  saveTasks(tasks); renderTasks(); refreshQueue();
+  processDualTask(taskId);
+}
+
+async function retryDualWrite(taskId) {
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task || !task.cards || !task.cards.length) { toast('无可重试数据', 'err'); return; }
+  task.status = 'uploading';
+  task.error = null;
+  task.statusDetail = '重新写入飞书中...';
+  saveTasks(tasks); renderTasks(); refreshQueue();
+  try {
+    const cfg = loadConfig();
+    const fileTokens = [];
+    for (const key of [`${taskId}_f0`, `${taskId}_b0`]) {
+      const du = await getImageData(key);
+      if (du) {
+        const file = dataUrlToFile(du, key.includes('_f') ? 'front.jpg' : 'back.jpg');
+        try { fileTokens.push(await feishuUploadImage(file, cfg.appToken)); } catch (_) {}
+      }
+    }
+    const attachment = fileTokens.map(ft => ({ file_token: ft }));
+    const records = task.cards.map(card => {
+      const r = {
+        '姓名': (card.name || '').trim(),
+        '电话': (card.phone || '').trim(),
+        '公司': (card.company || '').trim(),
+        '职位': (card.title || '').trim(),
+        '邮箱': (card.email || '').trim(),
+        '地址': (card.address || '').trim(),
+      };
+      if (attachment.length) r['来源图片'] = attachment;
+      return r;
+    });
+    await feishuAddRecords(cfg.appToken, cfg.tableId, records);
+    task.status = 'completed';
+    task.error = null;
+    task.statusDetail = null;
+    deleteTaskImages(task);
+    toast('写入成功', 'ok');
+  } catch (e) {
+    task.status = 'failed';
+    task.error = e.message;
+    task.errorRaw = e.rawDetail || e.message;
+    task.statusDetail = null;
+    toast('写入失败: ' + e.message, 'err');
+  }
+  const t2 = loadTasks(); Object.assign(t2.find(t => t.id === taskId) || {}, task); saveTasks(t2); renderTasks(); refreshQueue();
+}
+
+// ========== 名片匹配 & 合并 ==========
+function normalizeForMatch(s) {
+  return (s || '').replace(/[\s\-\(\)（）+\u3000·.。]+/g, '').toLowerCase();
+}
+
+function matchAndMergeCards(frontCards, backCards) {
+  const usedBack = new Set();
+  const result = [];
+
+  for (const fc of frontCards) {
+    const fcPhone = normalizeForMatch(fc.phone);
+    const fcEmail = normalizeForMatch(fc.email);
+    let bestIdx = -1;
+
+    for (let j = 0; j < backCards.length; j++) {
+      if (usedBack.has(j)) continue;
+      const bc = backCards[j];
+      // 匹配优先级：电话 > 邮箱
+      if (fcPhone && normalizeForMatch(bc.phone) && fcPhone === normalizeForMatch(bc.phone)) { bestIdx = j; break; }
+      if (fcEmail && normalizeForMatch(bc.email) && fcEmail === normalizeForMatch(bc.email)) { bestIdx = j; break; }
+    }
+
+    if (bestIdx >= 0) {
+      result.push(mergeCardPair(fc, backCards[bestIdx]));
+      usedBack.add(bestIdx);
+    } else {
+      result.push(fc); // 未匹配的正面名片
+    }
+  }
+
+  // 未匹配的背面名片
+  for (let j = 0; j < backCards.length; j++) {
+    if (!usedBack.has(j)) result.push(backCards[j]);
+  }
+
+  console.log(`[matchAndMerge] 正面${frontCards.length}张 + 背面${backCards.length}张 → 合并后${result.length}张 (匹配${usedBack.size}对)`);
+  return result;
+}
+
+function mergeCardPair(zhCard, enCard) {
+  return {
+    name: mergeField(zhCard.name, enCard.name),
+    phone: (zhCard.phone || enCard.phone || '').trim(),   // 电话取非空（两面应相同）
+    company: mergeField(zhCard.company, enCard.company),
+    title: mergeField(zhCard.title, enCard.title),
+    email: (zhCard.email || enCard.email || '').trim(),    // 邮箱取非空
+    address: mergeField(zhCard.address, enCard.address),
+    remark: mergeField(zhCard.remark, enCard.remark),
+  };
+}
+
+/**
+ * 智能合并中英文字段：
+ * - 都空 → 空
+ * - 一方空 → 取非空
+ * - 完全相同（含忽略大小写）→ 不重复
+ * - 一方包含另一方 → 取较长的
+ * - 一个中文一个英文 → "中文（English）"
+ * - 无法区分 → "A（B）"
+ */
+function mergeField(val1, val2) {
+  const a = (val1 || '').trim();
+  const b = (val2 || '').trim();
+  if (!a && !b) return '';
+  if (!a) return b;
+  if (!b) return a;
+  if (a === b) return a;
+  if (a.toLowerCase() === b.toLowerCase()) return a;
+  // 一方包含另一方
+  if (a.includes(b) || b.includes(a)) return a.length >= b.length ? a : b;
+  // 判断中英文
+  const hasChinese = s => /[\u4e00-\u9fff]/.test(s);
+  const aCn = hasChinese(a), bCn = hasChinese(b);
+  if (aCn && !bCn) return `${a}（${b}）`;
+  if (!aCn && bCn) return `${b}（${a}）`;
+  // 都有中文或都没有 → 拼接（第一个通常是正面/中文）
+  return `${a}（${b}）`;
+}
+
 // ========== Init ==========
 loadSettingsUI();
+initModelSelector();
+initDualMode();
 renderTasks();
 refreshQueue();
 </script>
