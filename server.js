@@ -31,6 +31,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const PORT = process.env.PORT || 3200;
+const APP_ENV = process.env.APP_ENV || 'production';
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
@@ -281,10 +282,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- OAuth: 返回 APP_ID 给前端构造登录 URL ---
+  // --- 应用配置（APP_ID + 环境标识） ---
   if (pathname === '/api/internal/oauth-config' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ app_id: FEISHU_APP_ID }));
+    res.end(JSON.stringify({ app_id: FEISHU_APP_ID, env: APP_ENV }));
     return;
   }
 
@@ -343,6 +344,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   log('='.repeat(50));
   log('  名片扫描助手 - 服务已启动');
+  log(`  运行环境: ${APP_ENV}`);
   log(`  访问地址: http://localhost:${PORT}`);
   log('  密钥状态:');
   log(`    FEISHU_APP_ID:     ${FEISHU_APP_ID ? '✓ 已配置' : '✗ 未配置'}`);

@@ -471,6 +471,8 @@ async function initBitableTable() {
 }
 
 // ========== AI 模型切换 ==========
+let appEnv = 'production';
+
 function onAiModelChange(key) {
   const c = loadConfig();
   c.aiModel = key;
@@ -478,13 +480,21 @@ function onAiModelChange(key) {
   toast('已切换到: ' + AI_MODELS[key].label, 'ok');
 }
 
+function getAvailableModels() {
+  if (appEnv === 'production') return { doubao: AI_MODELS.doubao };
+  return AI_MODELS;
+}
+
 function initModelSelector() {
   const sel = document.getElementById('aiModelSelect');
   if (!sel) return;
   const c = loadConfig();
-  sel.innerHTML = Object.entries(AI_MODELS).map(([k, v]) =>
+  const models = getAvailableModels();
+  if (!models[c.aiModel]) { c.aiModel = DEFAULT_AI_MODEL; saveConfig(c); }
+  sel.innerHTML = Object.entries(models).map(([k, v]) =>
     `<option value="${k}" ${k === c.aiModel ? 'selected' : ''}>${v.label}</option>`
   ).join('');
+  sel.disabled = Object.keys(models).length <= 1;
 }
 
 const CARD_PROMPT = `你是一名专业的名片结构化解析引擎。请识别图片中的全部名片并输出结构化 JSON。
@@ -1821,6 +1831,13 @@ function logout() {
 }
 
 async function initAuth() {
+  // 0. 获取服务端环境配置
+  try {
+    const cfgResp = await fetch('/api/internal/oauth-config');
+    const cfgData = await cfgResp.json();
+    if (cfgData.env) appEnv = cfgData.env;
+  } catch (e) { console.warn('Failed to fetch app config:', e); }
+
   // 1. 处理 OAuth 回调（URL 中有 ?code=）
   await handleOAuthCallback();
 
