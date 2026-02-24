@@ -37,12 +37,227 @@ const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const DOUBAO_API_KEY = process.env.DOUBAO_API_KEY || '';
 
+const IMAGE_MAX_AGE_DAYS = parseInt(process.env.IMAGE_MAX_AGE_DAYS || '30', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+
 // Timestamped logging
 function ts() {
   return new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 function log(...args) { console.log(`[${ts()}]`, ...args); }
 function logErr(...args) { console.error(`[${ts()}]`, ...args); }
+
+// ========== JSON 文件存储层 ==========
+function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); }
+
+function readJSON(filePath, fallback) {
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch { return typeof fallback === 'function' ? fallback() : fallback; }
+}
+
+function writeJSON(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+// --- Sessions ---
+const sessionsPath = () => path.join(DATA_DIR, 'sessions.json');
+
+function getSession(token) {
+  const sessions = readJSON(sessionsPath(), {});
+  const s = sessions[token];
+  if (!s) return null;
+  if (s.expireAt && Date.now() / 1000 > s.expireAt) {
+    delete sessions[token];
+    writeJSON(sessionsPath(), sessions);
+    return null;
+  }
+  return s;
+}
+
+function saveSession(token, userId, userName, expiresIn) {
+  const sessions = readJSON(sessionsPath(), {});
+  sessions[token] = {
+    userId,
+    userName,
+    expireAt: Math.floor(Date.now() / 1000) + (expiresIn || 7200),
+  };
+  writeJSON(sessionsPath(), sessions);
+}
+
+// --- Tasks per user ---
+const userTasksPath = (userId) => path.join(DATA_DIR, 'users', userId, 'tasks.json');
+
+function getUserTasks(userId) {
+  return readJSON(userTasksPath(userId), []);
+}
+
+function saveUserTasks(userId, tasks) {
+  writeJSON(userTasksPath(userId), tasks);
+}
+
+// --- Images per user ---
+function userImagesDir(userId) {
+  const dir = path.join(DATA_DIR, 'users', userId, 'images');
+  ensureDir(dir);
+  return dir;
+}
+
+function imageFilePath(userId, taskId, suffix) {
+  const safe = String(taskId).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeSuffix = String(suffix).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return path.join(userImagesDir(userId), `${safe}_${safeSuffix}.jpg`);
+}
+
+// ========== 鉴权中间件 ==========
+function authenticate(req) {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!token) return null;
+  return getSession(token);
+}
+
+function sendJSON(res, status, data) {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Content-Length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+// ========== 任务 CRUD API ==========
+async function handleGetTasks(req, res, user) {
+  const tasks = getUserTasks(user.userId);
+  sendJSON(res, 200, tasks);
+}
+
+async function handleCreateTasks(req, res, user) {
+  const body = JSON.parse((await readBody(req)).toString('utf8'));
+  const newTasks = Array.isArray(body) ? body : [body];
+  const tasks = getUserTasks(user.userId);
+  for (const t of newTasks) {
+    t.userId = user.userId;
+    tasks.unshift(t);
+  }
+  saveUserTasks(user.userId, tasks);
+  sendJSON(res, 201, { ok: true, count: newTasks.length });
+}
+
+async function handleUpdateTask(req, res, user, taskId) {
+  const updates = JSON.parse((await readBody(req)).toString('utf8'));
+  const tasks = getUserTasks(user.userId);
+  const task = tasks.find(t => String(t.id) === taskId);
+  if (!task) return sendJSON(res, 404, { error: 'Task not found' });
+  Object.assign(task, updates, { updatedAt: new Date().toLocaleString() });
+  saveUserTasks(user.userId, tasks);
+  sendJSON(res, 200, task);
+}
+
+async function handleReplaceTasks(req, res, user) {
+  const body = JSON.parse((await readBody(req)).toString('utf8'));
+  if (!Array.isArray(body)) return sendJSON(res, 400, { error: 'Expected array' });
+  saveUserTasks(user.userId, body);
+  sendJSON(res, 200, { ok: true, count: body.length });
+}
+
+async function handleDeleteTasks(req, res, user) {
+  const body = JSON.parse((await readBody(req)).toString('utf8'));
+  const tasks = getUserTasks(user.userId);
+  let toRemove;
+  if (body.ids && Array.isArray(body.ids)) {
+    const idSet = new Set(body.ids.map(String));
+    toRemove = tasks.filter(t => idSet.has(String(t.id)));
+  } else if (body.status) {
+    toRemove = body.status === 'all' ? [...tasks] : tasks.filter(t => t.status === body.status);
+  } else {
+    return sendJSON(res, 400, { error: 'Provide ids or status' });
+  }
+  // Clean up images for removed tasks
+  for (const t of toRemove) {
+    cleanTaskImages(user.userId, t);
+  }
+  const remaining = tasks.filter(t => !toRemove.includes(t));
+  saveUserTasks(user.userId, remaining);
+  sendJSON(res, 200, { ok: true, removed: toRemove.length });
+}
+
+function cleanTaskImages(userId, task) {
+  const dir = path.join(DATA_DIR, 'users', userId, 'images');
+  if (!fs.existsSync(dir)) return;
+  const prefix = String(task.id).replace(/[^a-zA-Z0-9._-]/g, '_') + '_';
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (f.startsWith(prefix)) {
+        fs.unlinkSync(path.join(dir, f));
+      }
+    }
+  } catch (e) { logErr('[cleanTaskImages]', e.message); }
+}
+
+// ========== 图片 API ==========
+async function handleUploadImage(req, res, user, taskId, suffix) {
+  // 磁盘空间检查
+  try {
+    const stat = fs.statfsSync(DATA_DIR);
+    const freeGB = (stat.bfree * stat.bsize) / (1024 ** 3);
+    if (freeGB < 2) return sendJSON(res, 507, { error: `磁盘空间不足 (${freeGB.toFixed(1)}GB)，请清理后重试` });
+  } catch {}
+
+  const body = JSON.parse((await readBody(req)).toString('utf8'));
+  const dataUrl = body.data;
+  if (!dataUrl) return sendJSON(res, 400, { error: 'Missing data field' });
+
+  const filePath = imageFilePath(user.userId, taskId, suffix);
+  // dataUrl format: data:image/jpeg;base64,xxxxx
+  const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+  log(`[image] saved ${filePath} (${(fs.statSync(filePath).size / 1024).toFixed(0)}KB)`);
+  sendJSON(res, 201, { ok: true });
+}
+
+async function handleGetImage(req, res, user, taskId, suffix) {
+  const filePath = imageFilePath(user.userId, taskId, suffix);
+  if (!fs.existsSync(filePath)) return sendJSON(res, 404, { error: 'Image not found' });
+  const buf = fs.readFileSync(filePath);
+  const dataUrl = 'data:image/jpeg;base64,' + buf.toString('base64');
+  sendJSON(res, 200, { data: dataUrl });
+}
+
+async function handleDeleteImage(req, res, user, taskId, suffix) {
+  const filePath = imageFilePath(user.userId, taskId, suffix);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  sendJSON(res, 200, { ok: true });
+}
+
+// ========== 启动时清理超龄图片 ==========
+function cleanExpiredImages() {
+  const usersDir = path.join(DATA_DIR, 'users');
+  if (!fs.existsSync(usersDir)) return;
+  const maxAge = IMAGE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let cleaned = 0;
+  for (const uid of fs.readdirSync(usersDir)) {
+    const imgDir = path.join(usersDir, uid, 'images');
+    if (!fs.existsSync(imgDir)) continue;
+    for (const f of fs.readdirSync(imgDir)) {
+      const fp = path.join(imgDir, f);
+      try {
+        if (now - fs.statSync(fp).mtimeMs > maxAge) { fs.unlinkSync(fp); cleaned++; }
+      } catch {}
+    }
+  }
+  if (cleaned) log(`[cleanup] 已清理 ${cleaned} 张超过 ${IMAGE_MAX_AGE_DAYS} 天的图片`);
+}
 
 // ========== MIME & 路由 ==========
 const MIME = {
@@ -200,6 +415,7 @@ function handleTenantToken(req, res) {
 }
 
 // ========== OAuth token 交换（支持 authorization_code 和 refresh_token）==========
+// 交换成功后自动获取用户信息并写入 session
 function handleOAuthToken(req, res) {
   const chunks = [];
   req.on('data', c => chunks.push(c));
@@ -240,6 +456,14 @@ function handleOAuthToken(req, res) {
         const status = proxyRes.statusCode;
         log(`[oauth-token] ${status} ${elapsed}ms grant=${tokenBody.grant_type}`);
         if (status >= 400) logErr(`[oauth-token body] ${respBody.slice(0, 500)}`);
+
+        // 交换成功后，获取用户信息并写入 session
+        let tokenData;
+        try { tokenData = JSON.parse(respBody); } catch { tokenData = {}; }
+        if (tokenData.access_token) {
+          fetchUserInfoAndSaveSession(tokenData.access_token, tokenData.expires_in || 7200);
+        }
+
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.writeHead(status);
@@ -256,6 +480,34 @@ function handleOAuthToken(req, res) {
     proxyReq.write(postBody);
     proxyReq.end();
   });
+}
+
+// 用 access_token 调用飞书 user_info API，获取 user_id 和 name，写入 session
+function fetchUserInfoAndSaveSession(accessToken, expiresIn) {
+  const infoReq = https.request({
+    hostname: 'open.feishu.cn',
+    path: '/open-apis/authen/v1/user_info',
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + accessToken },
+  }, (infoRes) => {
+    const chunks = [];
+    infoRes.on('data', c => chunks.push(c));
+    infoRes.on('end', () => {
+      try {
+        const info = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (info.code === 0 && info.data) {
+          const userId = info.data.user_id || info.data.open_id || 'unknown';
+          const userName = info.data.name || '';
+          saveSession(accessToken, userId, userName, expiresIn);
+          log(`[session] saved user=${userName}(${userId}) expires_in=${expiresIn}s`);
+        } else {
+          logErr(`[session] user_info failed: ${JSON.stringify(info).slice(0, 300)}`);
+        }
+      } catch (e) { logErr(`[session] parse error: ${e.message}`); }
+    });
+  });
+  infoReq.on('error', (err) => logErr(`[session] user_info request error: ${err.message}`));
+  infoReq.end();
 }
 
 // ========== HTTP 服务 ==========
@@ -294,6 +546,32 @@ const server = http.createServer((req, res) => {
     log('[internal] oauth-token exchange');
     handleOAuthToken(req, res);
     return;
+  }
+
+  // --- 任务 API（需鉴权） ---
+  if (pathname === '/api/tasks' || pathname.startsWith('/api/tasks/')) {
+    const user = authenticate(req);
+    if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
+    const taskIdMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    if (req.method === 'GET' && pathname === '/api/tasks') return handleGetTasks(req, res, user);
+    if (req.method === 'POST' && pathname === '/api/tasks') return handleCreateTasks(req, res, user);
+    if (req.method === 'PUT' && pathname === '/api/tasks') return handleReplaceTasks(req, res, user);
+    if (req.method === 'PATCH' && taskIdMatch) return handleUpdateTask(req, res, user, taskIdMatch[1]);
+    if (req.method === 'DELETE' && pathname === '/api/tasks') return handleDeleteTasks(req, res, user);
+    return sendJSON(res, 405, { error: 'Method not allowed' });
+  }
+
+  // --- 图片 API（需鉴权） ---
+  if (pathname.startsWith('/api/images/')) {
+    const user = authenticate(req);
+    if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
+    const imgMatch = pathname.match(/^\/api\/images\/([^/]+)\/([^/]+)$/);
+    if (!imgMatch) return sendJSON(res, 400, { error: 'Invalid image path, use /api/images/:taskId/:suffix' });
+    const [, taskId, suffix] = imgMatch;
+    if (req.method === 'POST') return handleUploadImage(req, res, user, taskId, suffix);
+    if (req.method === 'GET') return handleGetImage(req, res, user, taskId, suffix);
+    if (req.method === 'DELETE') return handleDeleteImage(req, res, user, taskId, suffix);
+    return sendJSON(res, 405, { error: 'Method not allowed' });
   }
 
   // --- 代理路由 ---
@@ -342,9 +620,12 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
+  ensureDir(DATA_DIR);
+  cleanExpiredImages();
   log('='.repeat(50));
   log('  名片扫描助手 - 服务已启动');
   log(`  运行环境: ${APP_ENV}`);
+  log(`  数据目录: ${DATA_DIR}`);
   log(`  访问地址: http://localhost:${PORT}`);
   log('  密钥状态:');
   log(`    FEISHU_APP_ID:     ${FEISHU_APP_ID ? '✓ 已配置' : '✗ 未配置'}`);

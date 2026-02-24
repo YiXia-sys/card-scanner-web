@@ -252,7 +252,7 @@ input:focus,select:focus{border-color:var(--primary)}
 <script>
 // ========== Config & Storage ==========
 const STORAGE_KEY = 'card_scanner_config';
-const TASKS_KEY = 'card_scanner_tasks';
+const TASKS_KEY = 'card_scanner_tasks'; // legacy, used for migration only
 
 // Credentials are injected server-side — NOT exposed in frontend code
 const FIXED_AIHUB_ENV = 'prod';
@@ -286,10 +286,65 @@ function loadConfig() {
   return cfg;
 }
 function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+
+// ========== 服务端任务存储（内存缓存 + API 同步） ==========
+let _taskCache = [];
+let _taskCacheLoaded = false;
+
 function loadTasks() {
-  try { return JSON.parse(localStorage.getItem(TASKS_KEY)) || []; } catch { return []; }
+  return _taskCache;
 }
-function saveTasks(tasks) { localStorage.setItem(TASKS_KEY, JSON.stringify(tasks)); }
+
+let _syncTimer = null;
+function saveTasks(tasks) {
+  _taskCache = tasks;
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => _debouncedSync(), 500);
+}
+
+function getAuthToken() {
+  const o = getOAuth();
+  return o?.access_token || '';
+}
+
+async function authFetch(urlPath, options = {}) {
+  const token = getAuthToken();
+  if (!options.headers) options.headers = {};
+  if (token) options.headers['Authorization'] = 'Bearer ' + token;
+  if (!options.headers['Content-Type'] && options.body && typeof options.body === 'string') {
+    options.headers['Content-Type'] = 'application/json';
+  }
+  return fetch(urlPath, options);
+}
+
+async function _debouncedSync() {
+  if (!getAuthToken()) return;
+  try {
+    const stripped = _taskCache.map(t => {
+      const copy = { ...t };
+      delete copy._localImage;
+      return copy;
+    });
+    await authFetch('/api/tasks', { method: 'PUT', body: JSON.stringify(stripped) });
+  } catch (e) {
+    console.error('[tasks] sync error:', e.message);
+  }
+}
+
+async function loadTasksFromServer() {
+  try {
+    const resp = await authFetch('/api/tasks');
+    if (resp.ok) {
+      _taskCache = await resp.json();
+      _taskCacheLoaded = true;
+    } else if (resp.status === 401) {
+      console.log('[tasks] server 401, need re-login');
+    }
+  } catch (e) {
+    console.error('[tasks] load error:', e.message);
+  }
+  return _taskCache;
+}
 
 // ========== Toast ==========
 function toast(msg, type = 'info') {
@@ -777,102 +832,58 @@ function dataUrlToFile(dataUrl, fileName) {
   return new File([blob], fileName, { type: blob.type });
 }
 
-// IndexedDB for persistent image storage (survives page refresh)
-const IDB_NAME = 'card_scanner_images';
-const IDB_STORE = 'images';
-
-function openImageDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+// ========== 图片存储（服务端 API，仅存储识别失败的图片） ==========
+if (!window._imageMemCache) window._imageMemCache = {};
 
 async function saveImageData(taskId, dataUrl) {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(dataUrl, String(taskId));
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  window._imageMemCache[String(taskId)] = dataUrl;
 }
 
 async function getImageData(taskId) {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(String(taskId));
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
+  if (window._imageMemCache[String(taskId)]) return window._imageMemCache[String(taskId)];
+  try {
+    const resp = await authFetch(`/api/images/${taskId}/orig`);
+    if (resp.ok) { const { data } = await resp.json(); return data; }
+  } catch {}
+  return null;
 }
 
 async function deleteImageData(taskId) {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).delete(String(taskId));
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  delete window._imageMemCache[String(taskId)];
+  try { await authFetch(`/api/images/${taskId}/orig`, { method: 'DELETE' }); } catch {}
 }
 
-async function clearAllImageData() {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function getImageCount() {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).count();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function getAllImageKeys() {
-  const db = await openImageDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).getAllKeys();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// Keep at most MAX_CACHED_IMAGES images; evict completed/oldest first
-const MAX_CACHED_IMAGES = 30;
-async function evictOldImages() {
-  const count = await getImageCount();
-  if (count <= MAX_CACHED_IMAGES) return;
-  const keys = await getAllImageKeys();
-  const tasks = loadTasks();
-  // Build set of task IDs that still need images (pending/processing/uploading/failed)
-  const neededIds = new Set(
-    tasks.filter(t => t.status !== 'completed').map(t => String(t.id))
-  );
-  // Delete images for completed tasks first, then oldest
-  // dual 任务图片键格式为 "id_f0"/"id_b0"，匹配基础 ID
-  const toDelete = keys.filter(k => {
-    const baseId = String(k).split('_')[0];
-    return !neededIds.has(String(k)) && !neededIds.has(baseId);
-  });
-  const extra = count - MAX_CACHED_IMAGES;
-  const deleteBatch = toDelete.slice(0, Math.max(extra, 0));
-  for (const k of deleteBatch) {
-    await deleteImageData(k).catch(() => {});
+async function deleteTaskImages(taskOrId) {
+  const id = typeof taskOrId === 'object' ? taskOrId.id : taskOrId;
+  for (const k of Object.keys(window._imageMemCache)) {
+    if (k === String(id) || k.startsWith(id + '_')) delete window._imageMemCache[k];
+  }
+  const task = typeof taskOrId === 'object' ? taskOrId : loadTasks().find(t => t.id == id);
+  if (task && task.type === 'dual') {
+    for (let i = 0; i < (task.frontCount || 0); i++) { try { await authFetch(`/api/images/${id}/f${i}`, { method: 'DELETE' }); } catch {} }
+    for (let i = 0; i < (task.backCount || 0); i++) { try { await authFetch(`/api/images/${id}/b${i}`, { method: 'DELETE' }); } catch {} }
+  } else {
+    try { await authFetch(`/api/images/${id}/orig`, { method: 'DELETE' }); } catch {}
   }
 }
+
+async function uploadFailedImage(taskId, suffix) {
+  const key = suffix ? `${taskId}_${suffix}` : String(taskId);
+  const dataUrl = window._imageMemCache[key];
+  if (!dataUrl) return;
+  try {
+    await authFetch(`/api/images/${taskId}/${suffix || 'orig'}`, {
+      method: 'POST', body: JSON.stringify({ data: dataUrl }),
+    });
+  } catch (e) { console.error('[image upload]', e.message); }
+}
+
+async function clearSuccessImage(taskId) {
+  delete window._imageMemCache[String(taskId)];
+  try { await authFetch(`/api/images/${taskId}/orig`, { method: 'DELETE' }); } catch {}
+}
+
+function evictOldImages() { /* server handles cleanup */ }
 
 // ========== 文件选择（动态创建 input，兼容所有浏览器） ==========
 function pickFiles() {
@@ -1004,12 +1015,12 @@ async function processQueue() {
 
       task.status = 'completed';
       task.error = null;
-      // Clean up stored image for completed tasks to save space
-      deleteImageData(task.id).catch(() => {});
+      clearSuccessImage(task.id).catch(() => {});
     } catch (e) {
       task.status = 'failed';
       task.error = e.message || String(e);
       task.errorRaw = e.rawDetail || e.message || String(e);
+      uploadFailedImage(task.id, 'orig').catch(() => {});
     }
     const t3 = loadTasks(); Object.assign(t3.find(t=>t.id===task.id)||{}, task); saveTasks(t3); renderTasks(); refreshQueue();
   }
@@ -1102,7 +1113,7 @@ function batchDelete() {
   const tasks = loadTasks();
   const toRemove = tasks.filter(t => selectedIds.has(t.id));
   const remaining = tasks.filter(t => !selectedIds.has(t.id));
-  toRemove.forEach(t => deleteTaskImages(t));
+  toRemove.forEach(t => deleteTaskImages(t.id));
   saveTasks(remaining);
   selectedIds.clear();
   renderTasks();
@@ -1121,14 +1132,14 @@ function clearByStatus(status) {
   const labelMap = {failed:'失败',completed:'已完成',pending:'排队中',all:'全部'};
   if (!confirm(`确认清理「${labelMap[status]}」任务？`)) return;
   if (status === 'all') {
+    const tasks = loadTasks();
+    tasks.forEach(t => deleteTaskImages(t.id));
     saveTasks([]);
-    clearAllImageData().catch(() => {});
   } else {
     const tasks = loadTasks();
     const toRemove = tasks.filter(t => t.status === status);
     const remaining = tasks.filter(t => t.status !== status);
-    // Clean images for removed tasks (支持 dual 任务的多图片键)
-    toRemove.forEach(t => deleteTaskImages(t));
+    toRemove.forEach(t => deleteTaskImages(t.id));
     saveTasks(remaining);
   }
   renderTasks();
@@ -1374,16 +1385,6 @@ function clearDualStaging() {
   toast('已清空', 'info');
 }
 
-// 删除某个任务的全部图片（支持 dual 和 single）
-function deleteTaskImages(task) {
-  if (task.type === 'dual') {
-    for (let i = 0; i < (task.frontCount || 0); i++) deleteImageData(`${task.id}_f${i}`).catch(() => {});
-    for (let i = 0; i < (task.backCount || 0); i++) deleteImageData(`${task.id}_b${i}`).catch(() => {});
-  } else {
-    deleteImageData(task.id).catch(() => {});
-  }
-}
-
 // ---- 启动双面处理 ----
 async function startDualProcess() {
   if (!await ensureLoggedIn()) return;
@@ -1507,7 +1508,7 @@ async function processDualTask(taskId) {
     task3.error = null;
     task3.statusDetail = null;
     saveTasks(t3); renderTasks(); refreshQueue();
-    deleteTaskImages(task3);
+    deleteTaskImages(taskId);
     toast(`双面处理完成，共 ${mergedCards.length} 张名片`, 'ok');
 
   } catch (e) {
@@ -1518,6 +1519,9 @@ async function processDualTask(taskId) {
       task3.errorRaw = e.rawDetail || e.message || String(e);
       task3.statusDetail = null;
       saveTasks(t3); renderTasks(); refreshQueue();
+      // 失败时上传图片到服务端以便重试
+      for (let i = 0; i < (task3.frontCount || 0); i++) uploadFailedImage(taskId, `f${i}`).catch(() => {});
+      for (let i = 0; i < (task3.backCount || 0); i++) uploadFailedImage(taskId, `b${i}`).catch(() => {});
     }
     toast('双面处理失败: ' + e.message, 'err');
   }
@@ -1866,9 +1870,43 @@ async function initAuth() {
   loadSettingsUI();
   initModelSelector();
   initDualMode();
+
+  // 登录成功后从服务端加载任务
+  if (isLoggedIn()) {
+    await loadTasksFromServer();
+    // 检查 localStorage 是否有旧数据需要迁移
+    await migrateLocalData();
+  }
   renderTasks();
   refreshQueue();
 })();
+
+async function migrateLocalData() {
+  const oldRaw = localStorage.getItem('card_scanner_tasks');
+  if (!oldRaw) return;
+  let oldTasks;
+  try { oldTasks = JSON.parse(oldRaw); } catch { return; }
+  if (!Array.isArray(oldTasks) || !oldTasks.length) { localStorage.removeItem('card_scanner_tasks'); return; }
+
+  const serverTasks = loadTasks();
+  if (serverTasks.length > 0) {
+    // 服务端已有数据，提示用户选择
+    if (!confirm(`检测到浏览器本地有 ${oldTasks.length} 条旧记录。\n服务端已有 ${serverTasks.length} 条记录。\n\n是否将本地旧记录合并到服务端？\n（选择"取消"将丢弃本地旧记录）`)) {
+      localStorage.removeItem('card_scanner_tasks');
+      return;
+    }
+  }
+
+  // 合并：本地旧任务追加到末尾（去重 by id）
+  const existingIds = new Set(serverTasks.map(t => t.id));
+  const newOnes = oldTasks.filter(t => !existingIds.has(t.id));
+  if (newOnes.length) {
+    const merged = [...serverTasks, ...newOnes];
+    saveTasks(merged);
+    toast(`已迁移 ${newOnes.length} 条本地记录到服务端`, 'ok');
+  }
+  localStorage.removeItem('card_scanner_tasks');
+}
 </script>
 </body>
 </html>
