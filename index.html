@@ -154,16 +154,14 @@ input:focus,select:focus{border-color:var(--primary)}
 
     <!-- 单面模式 -->
     <div id="singleUpload">
-      <div class="upload-area" id="uploadArea" onclick="document.getElementById('galleryInput').click()">
+      <div class="upload-area" id="uploadArea" onclick="pickFiles()">
         <div class="icon">📸</div>
         <p>点击上传名片照片，或拖拽到此处</p>
         <p style="font-size:12px;color:#94a3b8">支持 JPG / PNG / HEIC，可多选</p>
       </div>
-      <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden" onchange="handleFiles(this.files)">
-      <input type="file" id="galleryInput" accept="image/*" multiple class="hidden" onchange="handleFiles(this.files)">
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn-primary btn-lg" style="flex:1" onclick="document.getElementById('cameraInput').click()">📷 拍照</button>
-        <button class="btn btn-outline btn-lg" style="flex:1" onclick="document.getElementById('galleryInput').click()">🖼️ 从相册选择</button>
+        <button class="btn btn-primary btn-lg" style="flex:1" onclick="pickCamera()">📷 拍照</button>
+        <button class="btn btn-outline btn-lg" style="flex:1" onclick="pickFiles()">🖼️ 从相册选择</button>
       </div>
     </div>
 
@@ -172,22 +170,20 @@ input:focus,select:focus{border-color:var(--primary)}
       <p style="font-size:12px;color:var(--text2);margin-bottom:8px">分别上传名片正面（中文）和背面（英文），系统自动按电话/邮箱匹配并合并</p>
       <div class="dual-grid">
         <div>
-          <div class="upload-area" onclick="document.getElementById('dualFrontInput').click()">
+          <div class="upload-area" onclick="pickDualFiles('front')">
             <div class="icon">📇</div>
             <p style="font-size:13px;font-weight:500">正面（中文）</p>
           </div>
           <div class="staging-info" id="frontCount">已选 0 张</div>
         </div>
         <div>
-          <div class="upload-area" onclick="document.getElementById('dualBackInput').click()">
+          <div class="upload-area" onclick="pickDualFiles('back')">
             <div class="icon">🔄</div>
             <p style="font-size:13px;font-weight:500">背面（英文）</p>
           </div>
           <div class="staging-info" id="backCount">已选 0 张</div>
         </div>
       </div>
-      <input type="file" id="dualFrontInput" accept="image/*" multiple class="hidden" onchange="handleDualFiles('front', this.files)">
-      <input type="file" id="dualBackInput" accept="image/*" multiple class="hidden" onchange="handleDualFiles('back', this.files)">
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn btn-primary btn-lg" style="flex:1" id="dualProcessBtn" onclick="startDualProcess()" disabled>开始处理双面名片</button>
         <button class="btn btn-outline btn-sm" onclick="clearDualStaging()" style="flex-shrink:0">清空</button>
@@ -849,6 +845,34 @@ async function evictOldImages() {
   for (const k of deleteBatch) {
     await deleteImageData(k).catch(() => {});
   }
+}
+
+// ========== 文件选择（动态创建 input，兼容所有浏览器） ==========
+function pickFiles() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.onchange = () => { if (input.files.length) handleFiles(input.files); };
+  input.click();
+}
+
+function pickCamera() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.setAttribute('capture', 'environment');
+  input.onchange = () => { if (input.files.length) handleFiles(input.files); };
+  input.click();
+}
+
+function pickDualFiles(side) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.onchange = () => { if (input.files.length) handleDualFiles(side, input.files); };
+  input.click();
 }
 
 // ========== Drag & Drop ==========
