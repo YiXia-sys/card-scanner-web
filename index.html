@@ -947,7 +947,7 @@ async function handleFiles(files) {
   saveTasks(tasks);
   renderTasks();
   refreshQueue();
-  evictOldImages().catch(() => {}); // auto cleanup
+  evictOldImages();
   processQueue();
 }
 
