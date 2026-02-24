@@ -319,6 +319,7 @@ async function authFetch(urlPath, options = {}) {
 
 async function _debouncedSync() {
   if (!getAuthToken()) { console.warn('[sync] no auth token, skip'); return; }
+  if (!_serverLoadOk) { console.warn('[sync] server not loaded yet, skip PUT'); return; }
   try {
     const stripped = _taskCache.map(t => {
       const copy = { ...t };
@@ -334,14 +335,21 @@ async function _debouncedSync() {
   }
 }
 
+let _serverLoadOk = false;
+
 async function loadTasksFromServer() {
+  _serverLoadOk = false;
   try {
     const resp = await authFetch('/api/tasks');
     if (resp.ok) {
       _taskCache = await resp.json();
       _taskCacheLoaded = true;
+      _serverLoadOk = true;
+      console.log('[tasks] loaded from server, count=' + _taskCache.length);
     } else if (resp.status === 401) {
-      console.log('[tasks] server 401, need re-login');
+      console.warn('[tasks] server 401, need re-login');
+    } else {
+      console.error('[tasks] load failed:', resp.status);
     }
   } catch (e) {
     console.error('[tasks] load error:', e.message);
@@ -1885,6 +1893,12 @@ async function initAuth() {
 })();
 
 async function migrateLocalData() {
+  // 只有服务端加载成功后才尝试迁移，避免覆盖服务端数据
+  if (!_serverLoadOk) {
+    console.warn('[migrate] server load failed, skip migration to prevent overwrite');
+    return;
+  }
+
   const oldRaw = localStorage.getItem('card_scanner_tasks');
   if (!oldRaw) return;
   let oldTasks;
@@ -1893,14 +1907,17 @@ async function migrateLocalData() {
 
   const serverTasks = loadTasks();
   if (serverTasks.length > 0) {
-    // 服务端已有数据，提示用户选择
     if (!confirm(`检测到浏览器本地有 ${oldTasks.length} 条旧记录。\n服务端已有 ${serverTasks.length} 条记录。\n\n是否将本地旧记录合并到服务端？\n（选择"取消"将丢弃本地旧记录）`)) {
+      localStorage.removeItem('card_scanner_tasks');
+      return;
+    }
+  } else {
+    if (!confirm(`检测到浏览器本地有 ${oldTasks.length} 条旧记录。\n是否迁移到服务端？\n（选择"取消"将丢弃本地旧记录）`)) {
       localStorage.removeItem('card_scanner_tasks');
       return;
     }
   }
 
-  // 合并：本地旧任务追加到末尾（去重 by id）
   const existingIds = new Set(serverTasks.map(t => t.id));
   const newOnes = oldTasks.filter(t => !existingIds.has(t.id));
   if (newOnes.length) {
