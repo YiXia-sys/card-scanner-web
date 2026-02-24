@@ -109,12 +109,58 @@ function imageFilePath(userId, taskId, suffix) {
   return path.join(userImagesDir(userId), `${safe}_${safeSuffix}.jpg`);
 }
 
-// ========== 鉴权中间件 ==========
-function authenticate(req) {
+// ========== 鉴权中间件（支持自动验证未知 token） ==========
+async function authenticate(req) {
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   if (!token) return null;
-  return getSession(token);
+
+  // 快速路径：session 缓存命中
+  const cached = getSession(token);
+  if (cached) return cached;
+
+  // 慢路径：调飞书 user_info 验证 token，通过则自动建 session
+  try {
+    const userInfo = await verifyTokenWithFeishu(token);
+    if (userInfo) {
+      saveSession(token, userInfo.userId, userInfo.userName, 7200);
+      log(`[auth] auto-created session for ${userInfo.userName}(${userInfo.userId})`);
+      return { userId: userInfo.userId, userName: userInfo.userName };
+    }
+  } catch (e) {
+    logErr(`[auth] verify error: ${e.message}`);
+  }
+  return null;
+}
+
+function verifyTokenWithFeishu(token) {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'open.feishu.cn',
+      path: '/open-apis/authen/v1/user_info',
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + token },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try {
+          const info = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          if (info.code === 0 && info.data) {
+            resolve({
+              userId: info.data.user_id || info.data.open_id || 'unknown',
+              userName: info.data.name || '',
+            });
+          } else {
+            resolve(null);
+          }
+        } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+    req.end();
+  });
 }
 
 function sendJSON(res, status, data) {
@@ -511,7 +557,7 @@ function fetchUserInfoAndSaveSession(accessToken, expiresIn) {
 }
 
 // ========== HTTP 服务 ==========
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url);
   const pathname = parsedUrl.pathname;
 
@@ -550,7 +596,7 @@ const server = http.createServer((req, res) => {
 
   // --- 任务 API（需鉴权） ---
   if (pathname === '/api/tasks' || pathname.startsWith('/api/tasks/')) {
-    const user = authenticate(req);
+    const user = await authenticate(req);
     log(`[api] ${req.method} ${pathname} user=${user ? user.userName + '(' + user.userId + ')' : 'NONE'}`);
     if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
     const taskIdMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
@@ -564,7 +610,7 @@ const server = http.createServer((req, res) => {
 
   // --- 图片 API（需鉴权） ---
   if (pathname.startsWith('/api/images/')) {
-    const user = authenticate(req);
+    const user = await authenticate(req);
     log(`[api] ${req.method} ${pathname} user=${user ? user.userName + '(' + user.userId + ')' : 'NONE'}`);
     if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
     const imgMatch = pathname.match(/^\/api\/images\/([^/]+)\/([^/]+)$/);
