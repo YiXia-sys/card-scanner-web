@@ -641,11 +641,15 @@ function extractGeminiText(candidates) {
 async function throwHttpError(resp, url) {
   const errText = await resp.text().catch(() => '');
   const raw = `HTTP ${resp.status} | URL: ${url} | Body: ${errText.slice(0, 500)}`;
-  let msg = `AI 服务 HTTP ${resp.status}`;
-  if (resp.status === 403) msg = 'AI 服务拒绝访问 (403)，请确认网络环境可访问 AIHub';
-  if (resp.status === 401) msg = 'AI 服务鉴权失败 (401)，请检查 API-KEY';
+  let detail = '';
+  try { const j = JSON.parse(errText); detail = j.msg || j.message || j.error_description || j.error || ''; } catch {}
+  let msg = `AI 服务错误 (${resp.status})`;
+  if (resp.status === 403) msg = `AI 服务拒绝请求 (403)${detail ? '：' + detail : '，可能图片触发了内容审核或超出大小限制'}`;
+  if (resp.status === 401) msg = 'AI 服务鉴权失败 (401)，请联系管理员检查 API-KEY';
+  if (resp.status === 413) msg = '图片过大 (413)，请尝试压缩图片后重试';
+  if (resp.status === 429) msg = 'AI 服务请求过于频繁 (429)，请稍后再试';
   const err = makeApiError(msg, raw);
-  err._noRetry = true;
+  err._noRetry = [403, 401, 413].includes(resp.status);
   throw err;
 }
 
