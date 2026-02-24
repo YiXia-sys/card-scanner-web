@@ -933,6 +933,8 @@ uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classL
 // ========== Task Queue ==========
 let currentFilter = 'all';
 let processing = false;
+const PAGE_SIZE = 20;
+let displayCount = PAGE_SIZE;
 
 async function handleFiles(files) {
   if (!files || !files.length) return;
@@ -1055,6 +1057,7 @@ function refreshQueue() {
 
 function setFilter(f) {
   currentFilter = f;
+  displayCount = PAGE_SIZE;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.tab[onclick="setFilter('${f}')"]`).classList.add('active');
   renderTasks();
@@ -1158,6 +1161,11 @@ function clearByStatus(status) {
   toast(`已清理「${labelMap[status]}」任务`, 'ok');
 }
 
+function loadMoreTasks() {
+  displayCount += PAGE_SIZE;
+  renderTasks();
+}
+
 function renderTasks() {
   const tasks = loadTasks();
   let filtered = tasks;
@@ -1170,7 +1178,10 @@ function renderTasks() {
     return;
   }
 
-  el.innerHTML = filtered.map(task => {
+  const visible = filtered.slice(0, displayCount);
+  const hasMore = filtered.length > displayCount;
+
+  el.innerHTML = visible.map(task => {
     const statusMap = {pending:'排队中',processing:'识别中',uploading:'上传中',completed:'已完成',failed:'失败'};
     const colorMap = {pending:'var(--warn)',processing:'var(--primary)',uploading:'var(--primary)',completed:'var(--success)',failed:'var(--danger)'};
     const statusText = task.statusDetail || statusMap[task.status] || task.status;
@@ -1233,6 +1244,14 @@ function renderTasks() {
       </div>
     </div>`;
   }).join('');
+
+  if (hasMore) {
+    el.innerHTML += `<div style="text-align:center;padding:12px">
+      <button class="btn btn-outline" onclick="loadMoreTasks()" style="font-size:13px;padding:8px 24px">
+        加载更多（剩余 ${filtered.length - displayCount} 条）
+      </button>
+    </div>`;
+  }
 }
 
 async function retryWrite(taskId) {
