@@ -551,6 +551,7 @@ const server = http.createServer((req, res) => {
   // --- 任务 API（需鉴权） ---
   if (pathname === '/api/tasks' || pathname.startsWith('/api/tasks/')) {
     const user = authenticate(req);
+    log(`[api] ${req.method} ${pathname} user=${user ? user.userName + '(' + user.userId + ')' : 'NONE'}`);
     if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
     const taskIdMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
     if (req.method === 'GET' && pathname === '/api/tasks') return handleGetTasks(req, res, user);
@@ -564,6 +565,7 @@ const server = http.createServer((req, res) => {
   // --- 图片 API（需鉴权） ---
   if (pathname.startsWith('/api/images/')) {
     const user = authenticate(req);
+    log(`[api] ${req.method} ${pathname} user=${user ? user.userName + '(' + user.userId + ')' : 'NONE'}`);
     if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期' });
     const imgMatch = pathname.match(/^\/api\/images\/([^/]+)\/([^/]+)$/);
     if (!imgMatch) return sendJSON(res, 400, { error: 'Invalid image path, use /api/images/:taskId/:suffix' });

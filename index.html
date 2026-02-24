@@ -318,16 +318,19 @@ async function authFetch(urlPath, options = {}) {
 }
 
 async function _debouncedSync() {
-  if (!getAuthToken()) return;
+  if (!getAuthToken()) { console.warn('[sync] no auth token, skip'); return; }
   try {
     const stripped = _taskCache.map(t => {
       const copy = { ...t };
       delete copy._localImage;
       return copy;
     });
-    await authFetch('/api/tasks', { method: 'PUT', body: JSON.stringify(stripped) });
+    console.log('[sync] PUT /api/tasks, count=' + stripped.length);
+    const resp = await authFetch('/api/tasks', { method: 'PUT', body: JSON.stringify(stripped) });
+    if (!resp.ok) console.error('[sync] server responded', resp.status, await resp.text());
+    else console.log('[sync] OK');
   } catch (e) {
-    console.error('[tasks] sync error:', e.message);
+    console.error('[sync] error:', e.message);
   }
 }
 
