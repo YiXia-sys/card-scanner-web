@@ -55,6 +55,9 @@ input:focus,select:focus{border-color:var(--primary)}
 .task-cards th{background:var(--primary-light);font-weight:600}
 .task-error{color:var(--danger);font-size:12px;margin-top:6px;word-break:break-all}
 .hidden{display:none!important}
+.batch-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;box-shadow:0 -2px 8px rgba(0,0,0,.06);border-radius:0 0 var(--radius) var(--radius)}
+.batch-bar .sel-count{font-size:13px;color:var(--text2);margin-left:auto}
+.task-check{width:18px;height:18px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;margin-right:8px}
 .tabs{display:flex;gap:4px;margin-bottom:12px}
 .tab{padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:#f1f5f9;color:var(--text2)}
 .tab.active{background:var(--primary);color:#fff}
@@ -202,6 +205,8 @@ input:focus,select:focus{border-color:var(--primary)}
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div class="card-title" style="margin:0">识别结果</div>
+      <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn btn-sm" id="batchToggleBtn" style="background:#f1f5f9;color:var(--text2);border:1px solid var(--border)" onclick="toggleBatchMode()">☑ 批量选择</button>
       <div style="position:relative;display:inline-block" id="clearDropdown">
         <button class="btn btn-danger btn-sm" onclick="toggleClearMenu()">清理 ▾</button>
         <div id="clearMenu" class="hidden" style="position:absolute;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:100;min-width:140px;padding:4px 0">
@@ -212,6 +217,7 @@ input:focus,select:focus{border-color:var(--primary)}
           <div style="padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--danger)" onclick="clearByStatus('all')" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background=''">清空全部</div>
         </div>
       </div>
+      </div>
     </div>
     <div class="tabs" id="filterTabs">
       <div class="tab active" onclick="setFilter('all')">全部</div>
@@ -219,6 +225,13 @@ input:focus,select:focus{border-color:var(--primary)}
       <div class="tab" onclick="setFilter('completed')">已完成</div>
     </div>
     <div id="taskList"><div style="text-align:center;color:var(--text2);padding:20px;font-size:14px">暂无识别记录</div></div>
+    <div id="batchBar" class="batch-bar hidden">
+      <button class="btn btn-sm" style="background:#f1f5f9;border:1px solid var(--border)" onclick="batchSelectAll()">全选</button>
+      <button class="btn btn-sm" style="background:#f1f5f9;border:1px solid var(--border)" onclick="batchInvert()">反选</button>
+      <span class="sel-count" id="batchCount">已选 0 项</span>
+      <button class="btn btn-danger btn-sm" onclick="batchDelete()">删除选中</button>
+      <button class="btn btn-sm" style="background:#f1f5f9;border:1px solid var(--border)" onclick="toggleBatchMode()">取消</button>
+    </div>
   </div>
 
   <!-- Guide -->
@@ -1022,6 +1035,73 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ========== 批量选择模式 ==========
+let batchMode = false;
+const selectedIds = new Set();
+
+function toggleBatchMode() {
+  batchMode = !batchMode;
+  selectedIds.clear();
+  const btn = document.getElementById('batchToggleBtn');
+  btn.style.background = batchMode ? 'var(--primary)' : '#f1f5f9';
+  btn.style.color = batchMode ? '#fff' : 'var(--text2)';
+  document.getElementById('batchBar').classList.toggle('hidden', !batchMode);
+  renderTasks();
+  updateBatchCount();
+}
+
+function toggleSelectTask(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  const cb = document.querySelector(`[data-batch-id="${id}"]`);
+  if (cb) cb.checked = selectedIds.has(id);
+  updateBatchCount();
+}
+
+function batchSelectAll() {
+  const tasks = loadTasks();
+  let filtered = tasks;
+  if (currentFilter === 'failed') filtered = tasks.filter(t => t.status === 'failed');
+  if (currentFilter === 'completed') filtered = tasks.filter(t => t.status === 'completed');
+  filtered.forEach(t => selectedIds.add(t.id));
+  document.querySelectorAll('.task-check').forEach(cb => cb.checked = true);
+  updateBatchCount();
+}
+
+function batchInvert() {
+  const tasks = loadTasks();
+  let filtered = tasks;
+  if (currentFilter === 'failed') filtered = tasks.filter(t => t.status === 'failed');
+  if (currentFilter === 'completed') filtered = tasks.filter(t => t.status === 'completed');
+  filtered.forEach(t => {
+    if (selectedIds.has(t.id)) selectedIds.delete(t.id); else selectedIds.add(t.id);
+  });
+  document.querySelectorAll('.task-check').forEach(cb => {
+    const id = Number(cb.dataset.batchId);
+    cb.checked = selectedIds.has(id);
+  });
+  updateBatchCount();
+}
+
+function batchDelete() {
+  if (!selectedIds.size) { toast('请先勾选要删除的任务', 'err'); return; }
+  if (!confirm(`确认删除选中的 ${selectedIds.size} 个任务？`)) return;
+  const tasks = loadTasks();
+  const toRemove = tasks.filter(t => selectedIds.has(t.id));
+  const remaining = tasks.filter(t => !selectedIds.has(t.id));
+  toRemove.forEach(t => deleteTaskImages(t));
+  saveTasks(remaining);
+  selectedIds.clear();
+  renderTasks();
+  refreshQueue();
+  updateBatchCount();
+  toast(`已删除 ${toRemove.length} 个任务`, 'ok');
+}
+
+function updateBatchCount() {
+  const el = document.getElementById('batchCount');
+  if (el) el.textContent = `已选 ${selectedIds.size} 项`;
+}
+
 function clearByStatus(status) {
   document.getElementById('clearMenu').classList.add('hidden');
   const labelMap = {failed:'失败',completed:'已完成',pending:'排队中',all:'全部'};
@@ -1101,13 +1181,20 @@ function renderTasks() {
       }
     }
 
-    return `<div class="task-item fade-in">
-      <div class="task-header">
-        <span style="font-size:13px;font-weight:500">${isDual ? '📑 ' : ''}${esc(task.fileName)}</span>
-        <span class="task-status" style="color:${colorMap[task.status]}">${statusText}</span>
+    const checkHtml = batchMode
+      ? `<input type="checkbox" class="task-check" data-batch-id="${task.id}" ${selectedIds.has(task.id)?'checked':''} onclick="event.stopPropagation();toggleSelectTask(${task.id})">`
+      : '';
+
+    return `<div class="task-item fade-in" ${batchMode ? `style="display:flex;align-items:flex-start;cursor:pointer" onclick="toggleSelectTask(${task.id})"` : ''}>
+      ${checkHtml}
+      <div style="flex:1;min-width:0">
+        <div class="task-header">
+          <span style="font-size:13px;font-weight:500">${isDual ? '📑 ' : ''}${esc(task.fileName)}</span>
+          <span class="task-status" style="color:${colorMap[task.status]}">${statusText}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">${task.createdAt} · 名片数: ${cards.length}</div>
+        ${cardsHtml}${errorHtml}${retryHtml}
       </div>
-      <div style="font-size:11px;color:var(--text2)">${task.createdAt} · 名片数: ${cards.length}</div>
-      ${cardsHtml}${errorHtml}${retryHtml}
     </div>`;
   }).join('');
 }
