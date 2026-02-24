@@ -50,8 +50,8 @@ input:focus,select:focus{border-color:var(--primary)}
 .task-details summary{font-size:12px;color:var(--primary);cursor:pointer;user-select:none;padding:4px 0;font-weight:500}
 .task-details summary:hover{text-decoration:underline}
 .task-cards{overflow-x:auto;margin-top:6px}
-.task-cards table{width:100%;border-collapse:collapse;font-size:12px;min-width:500px}
-.task-cards th,.task-cards td{padding:6px 8px;border:1px solid var(--border);text-align:left;white-space:nowrap}
+.task-cards table{width:100%;border-collapse:collapse;font-size:12px;min-width:500px;text-size-adjust:100%;-webkit-text-size-adjust:100%}
+.task-cards th,.task-cards td{padding:6px 8px;border:1px solid var(--border);text-align:left;white-space:nowrap;font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 .task-cards th{background:var(--primary-light);font-weight:600}
 .task-error{color:var(--danger);font-size:12px;margin-top:6px;word-break:break-all}
 .hidden{display:none!important}
