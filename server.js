@@ -198,6 +198,65 @@ function handleTenantToken(req, res) {
   proxyReq.end();
 }
 
+// ========== OAuth token 交换（支持 authorization_code 和 refresh_token）==========
+function handleOAuthToken(req, res) {
+  const chunks = [];
+  req.on('data', c => chunks.push(c));
+  req.on('end', () => {
+    let body;
+    try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { body = {}; }
+
+    const tokenBody = {
+      grant_type: body.grant_type || 'authorization_code',
+      client_id: FEISHU_APP_ID,
+      client_secret: FEISHU_APP_SECRET,
+    };
+
+    if (body.grant_type === 'refresh_token') {
+      tokenBody.refresh_token = body.refresh_token;
+    } else {
+      tokenBody.code = body.code;
+      if (body.redirect_uri) tokenBody.redirect_uri = body.redirect_uri;
+    }
+
+    const postBody = JSON.stringify(tokenBody);
+    const startTime = Date.now();
+
+    const proxyReq = https.request({
+      hostname: 'open.feishu.cn',
+      path: '/open-apis/authen/v2/oauth/token',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(postBody),
+      },
+    }, (proxyRes) => {
+      const resChunks = [];
+      proxyRes.on('data', c => resChunks.push(c));
+      proxyRes.on('end', () => {
+        const elapsed = Date.now() - startTime;
+        const respBody = Buffer.concat(resChunks).toString('utf8');
+        const status = proxyRes.statusCode;
+        log(`[oauth-token] ${status} ${elapsed}ms grant=${tokenBody.grant_type}`);
+        if (status >= 400) logErr(`[oauth-token body] ${respBody.slice(0, 500)}`);
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.writeHead(status);
+        res.end(respBody);
+      });
+    });
+
+    proxyReq.on('error', (err) => {
+      logErr(`[oauth-token error] ${err.message}`);
+      res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ code: -1, msg: 'Proxy error: ' + err.message }));
+    });
+
+    proxyReq.write(postBody);
+    proxyReq.end();
+  });
+}
+
 // ========== HTTP 服务 ==========
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url);
@@ -219,6 +278,20 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/internal/tenant-token' && req.method === 'POST') {
     log('[internal] tenant-token request');
     handleTenantToken(req, res);
+    return;
+  }
+
+  // --- OAuth: 返回 APP_ID 给前端构造登录 URL ---
+  if (pathname === '/api/internal/oauth-config' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ app_id: FEISHU_APP_ID }));
+    return;
+  }
+
+  // --- OAuth: code/refresh_token → user_access_token（密钥不经过前端） ---
+  if (pathname === '/api/internal/oauth-token' && req.method === 'POST') {
+    log('[internal] oauth-token exchange');
+    handleOAuthToken(req, res);
     return;
   }
 

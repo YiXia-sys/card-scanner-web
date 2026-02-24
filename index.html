@@ -82,8 +82,25 @@ input:focus,select:focus{border-color:var(--primary)}
 </style>
 </head>
 <body>
+<!-- 登录遮罩层 -->
+<div id="loginOverlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#f8fafc,#eef2ff);z-index:10000;display:flex;align-items:center;justify-content:center">
+  <div style="text-align:center;background:#fff;padding:40px 32px;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08);max-width:360px;width:90%">
+    <div style="font-size:64px;margin-bottom:12px">📇</div>
+    <h2 style="margin-bottom:4px;font-size:20px">名片扫描助手</h2>
+    <p style="color:#64748b;font-size:13px;margin-bottom:24px">请使用飞书账号登录后使用</p>
+    <button class="btn btn-primary btn-lg btn-block" onclick="startFeishuLogin()" id="loginBtn">使用飞书登录</button>
+    <div id="loginError" style="color:#ef4444;font-size:12px;margin-top:12px;display:none"></div>
+  </div>
+</div>
+
 <div class="container">
-  <h1>📇 名片扫描助手</h1>
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <h1 style="flex:1">📇 名片扫描助手</h1>
+    <div id="userBar" class="hidden" style="align-items:center;gap:8px;font-size:13px">
+      <span id="userName" style="color:var(--text2)"></span>
+      <button class="btn btn-sm" style="background:#f1f5f9;color:var(--text2);border:1px solid var(--border)" onclick="logout()">退出</button>
+    </div>
+  </div>
 
   <!-- Banner -->
   <div class="banner">
@@ -470,6 +487,7 @@ const CARD_PROMPT_SHORT = '识别图片中所有名片，返回 JSON 数组，�
 
 // 统一入口：根据配置选择模型
 async function callGemini(base64Image) {
+  if (!await ensureLoggedIn()) throw new Error('登录已过期，请重新登录飞书');
   const c = loadConfig();
   const modelKey = c.aiModel || DEFAULT_AI_MODEL;
   const modelCfg = AI_MODELS[modelKey];
@@ -845,6 +863,7 @@ let processing = false;
 
 async function handleFiles(files) {
   if (!files || !files.length) return;
+  if (!await ensureLoggedIn()) return;
   const c = loadConfig();
   if (!c.appToken || !c.tableId) { toast('请先解析多维表链接并初始化表格', 'err'); toggleSettings(); return; }
 
@@ -1242,6 +1261,7 @@ function deleteTaskImages(task) {
 
 // ---- 启动双面处理 ----
 async function startDualProcess() {
+  if (!await ensureLoggedIn()) return;
   const c = loadConfig();
   if (!c.appToken || !c.tableId) { toast('请先解析多维表链接并初始化表格', 'err'); toggleSettings(); return; }
   if (!dualStaging.front.length || !dualStaging.back.length) { toast('请同时上传正面和背面图片', 'err'); return; }
@@ -1527,12 +1547,196 @@ function mergeField(val1, val2) {
   return `${a}（${b}）`;
 }
 
+// ========== 飞书 OAuth 登录 ==========
+const OAUTH_KEY = 'card_scanner_oauth';
+const OAUTH_USER_KEY = 'card_scanner_user';
+
+function getOAuth() {
+  try { return JSON.parse(localStorage.getItem(OAUTH_KEY)) || null; } catch { return null; }
+}
+function saveOAuth(data) { localStorage.setItem(OAUTH_KEY, JSON.stringify(data)); }
+function clearOAuth() { localStorage.removeItem(OAUTH_KEY); localStorage.removeItem(OAUTH_USER_KEY); }
+
+function isLoggedIn() {
+  const d = getOAuth();
+  if (!d || !d.access_token) return false;
+  if (d.expire_at && Date.now() / 1000 > d.expire_at) return false;
+  return true;
+}
+
+async function startFeishuLogin() {
+  const btn = document.getElementById('loginBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '正在跳转...'; }
+  try {
+    const resp = await fetch('/api/internal/oauth-config');
+    const data = await resp.json();
+    const appId = data.app_id;
+    if (!appId) throw new Error('服务端未配置 APP_ID');
+    const redirectUri = encodeURIComponent(location.origin + location.pathname);
+    const state = Math.random().toString(36).slice(2);
+    localStorage.setItem('oauth_state', state);
+    location.href = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&response_type=code&redirect_uri=${redirectUri}&scope=offline_access&state=${state}`;
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '使用飞书登录'; }
+    const errEl = document.getElementById('loginError');
+    if (errEl) { errEl.textContent = '登录跳转失败: ' + e.message; errEl.style.display = 'block'; }
+  }
+}
+
+async function handleOAuthCallback() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  if (!code) return false;
+
+  // 验证 state
+  const expectedState = localStorage.getItem('oauth_state');
+  const returnedState = params.get('state');
+  if (expectedState && returnedState && expectedState !== returnedState) {
+    console.warn('OAuth state mismatch');
+  }
+  localStorage.removeItem('oauth_state');
+
+  try {
+    const redirectUri = location.origin + location.pathname;
+    const resp = await fetch('/api/internal/oauth-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }),
+    });
+    const data = await resp.json();
+    if (data.access_token) {
+      saveOAuth({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token || null,
+        expire_at: Date.now() / 1000 + (data.expires_in || 7200) - 60,
+        refresh_expire_at: data.refresh_token_expires_in
+          ? Date.now() / 1000 + data.refresh_token_expires_in - 60 : 0,
+      });
+    } else {
+      console.error('OAuth token exchange failed:', data);
+    }
+  } catch (e) {
+    console.error('OAuth token exchange error:', e);
+  }
+
+  // 清理 URL 中的 code/state 参数
+  history.replaceState(null, '', location.pathname);
+  return true;
+}
+
+async function refreshAccessToken() {
+  const oauth = getOAuth();
+  if (!oauth || !oauth.refresh_token) return false;
+  const now = Date.now() / 1000;
+  if (oauth.refresh_expire_at && now > oauth.refresh_expire_at) return false;
+
+  try {
+    const resp = await fetch('/api/internal/oauth-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: oauth.refresh_token }),
+    });
+    const data = await resp.json();
+    if (data.access_token) {
+      saveOAuth({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token || null,
+        expire_at: Date.now() / 1000 + (data.expires_in || 7200) - 60,
+        refresh_expire_at: data.refresh_token_expires_in
+          ? Date.now() / 1000 + data.refresh_token_expires_in - 60 : 0,
+      });
+      return true;
+    }
+  } catch (e) {
+    console.error('Token refresh failed:', e);
+  }
+  return false;
+}
+
+// 检查登录状态，过期则尝试刷新，刷新失败弹出登录
+async function ensureLoggedIn() {
+  if (isLoggedIn()) return true;
+  // 尝试用 refresh_token 续期
+  if (await refreshAccessToken()) return true;
+  // 全部失败，要求重新登录
+  toast('登录已过期，请重新登录飞书', 'err');
+  clearOAuth();
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('userBar').classList.add('hidden');
+  return false;
+}
+
+async function fetchAndDisplayUser() {
+  // 先检查缓存
+  const cached = localStorage.getItem(OAUTH_USER_KEY);
+  if (cached) {
+    try {
+      const u = JSON.parse(cached);
+      showUserBar(u.name);
+      return;
+    } catch {}
+  }
+
+  const oauth = getOAuth();
+  if (!oauth) return;
+  try {
+    const resp = await fetch('/api/feishu/authen/v1/user_info', {
+      headers: { 'Authorization': 'Bearer ' + oauth.access_token },
+    });
+    const data = await resp.json();
+    if (data.code === 0 && data.data) {
+      const name = data.data.name || '已登录';
+      localStorage.setItem(OAUTH_USER_KEY, JSON.stringify({ name }));
+      showUserBar(name);
+    }
+  } catch (e) {
+    console.error('Fetch user info failed:', e);
+    showUserBar('已登录');
+  }
+}
+
+function showUserBar(name) {
+  document.getElementById('userName').textContent = name;
+  document.getElementById('userBar').classList.remove('hidden');
+  document.getElementById('userBar').style.display = 'flex';
+}
+
+function logout() {
+  if (!confirm('确认退出登录？')) return;
+  clearOAuth();
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('userBar').classList.add('hidden');
+  toast('已退出登录', 'info');
+}
+
+async function initAuth() {
+  // 1. 处理 OAuth 回调（URL 中有 ?code=）
+  await handleOAuthCallback();
+
+  // 2. 检查登录状态
+  if (isLoggedIn()) {
+    document.getElementById('loginOverlay').style.display = 'none';
+    fetchAndDisplayUser();
+  } else {
+    // 尝试 refresh
+    if (await refreshAccessToken()) {
+      document.getElementById('loginOverlay').style.display = 'none';
+      fetchAndDisplayUser();
+    } else {
+      document.getElementById('loginOverlay').style.display = 'flex';
+    }
+  }
+}
+
 // ========== Init ==========
-loadSettingsUI();
-initModelSelector();
-initDualMode();
-renderTasks();
-refreshQueue();
+(async function init() {
+  await initAuth();
+  loadSettingsUI();
+  initModelSelector();
+  initDualMode();
+  renderTasks();
+  refreshQueue();
+})();
 </script>
 </body>
 </html>
