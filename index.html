@@ -264,18 +264,20 @@ const AI_MODELS = {
 };
 const DEFAULT_AI_MODEL = 'doubao';
 
-// When running via local proxy (server.js), API calls go through /api/... to avoid CORS.
-const PROXY_BASE = location.protocol === 'file:' ? '' : '';
-const FEISHU_BASE = '/api/feishu/';
+// Auto-detect base path for sub-directory deployment (e.g. /card/)
+const BASE_PATH = location.pathname.replace(/\/[^/]*$/, '/').replace(/\/+$/, '');
+function apiUrl(path) { return BASE_PATH + path; }
+
+const FEISHU_BASE = apiUrl('/api/feishu/');
 const DOUBAO_URLS = {
-  prod: '/api/doubao-prod/',
-  pre: '/api/doubao-pre/',
-  test: '/api/doubao-test/',
+  prod: apiUrl('/api/doubao-prod/'),
+  pre: apiUrl('/api/doubao-pre/'),
+  test: apiUrl('/api/doubao-test/'),
 };
 const GEMINI_URLS = {
-  prod: '/api/aihub-prod/',
-  pre: '/api/aihub-pre/',
-  test: '/api/aihub-test/',
+  prod: apiUrl('/api/aihub-prod/'),
+  pre: apiUrl('/api/aihub-pre/'),
+  test: apiUrl('/api/aihub-test/'),
 };
 
 function loadConfig() {
@@ -327,7 +329,7 @@ async function _debouncedSync() {
       return copy;
     });
     console.log('[sync] PUT /api/tasks, count=' + stripped.length);
-    const resp = await authFetch('/api/tasks', { method: 'PUT', body: JSON.stringify(stripped) });
+    const resp = await authFetch(apiUrl('/api/tasks'), { method: 'PUT', body: JSON.stringify(stripped) });
     if (!resp.ok) console.error('[sync] server responded', resp.status, await resp.text());
     else console.log('[sync] OK');
   } catch (e) {
@@ -340,7 +342,7 @@ let _serverLoadOk = false;
 async function loadTasksFromServer() {
   _serverLoadOk = false;
   try {
-    const resp = await authFetch('/api/tasks');
+    const resp = await authFetch(apiUrl('/api/tasks'));
     if (resp.ok) {
       _taskCache = await resp.json();
       _taskCacheLoaded = true;
@@ -446,7 +448,7 @@ async function ensureTenantToken(forceRefresh = false) {
   const now = Date.now() / 1000;
   if (!forceRefresh && tenantToken && now < tenantTokenExpire) return;
   // Call server-side endpoint — credentials never leave the server
-  const resp = await safeFetch('/api/internal/tenant-token', {
+  const resp = await safeFetch(apiUrl('/api/internal/tenant-token'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
   });
@@ -853,7 +855,7 @@ async function saveImageData(taskId, dataUrl) {
 async function getImageData(taskId) {
   if (window._imageMemCache[String(taskId)]) return window._imageMemCache[String(taskId)];
   try {
-    const resp = await authFetch(`/api/images/${taskId}/orig`);
+    const resp = await authFetch(apiUrl(`/api/images/${taskId}/orig`));
     if (resp.ok) { const { data } = await resp.json(); return data; }
   } catch {}
   return null;
@@ -861,7 +863,7 @@ async function getImageData(taskId) {
 
 async function deleteImageData(taskId) {
   delete window._imageMemCache[String(taskId)];
-  try { await authFetch(`/api/images/${taskId}/orig`, { method: 'DELETE' }); } catch {}
+  try { await authFetch(apiUrl(`/api/images/${taskId}/orig`), { method: 'DELETE' }); } catch {}
 }
 
 async function deleteTaskImages(taskOrId) {
@@ -871,10 +873,10 @@ async function deleteTaskImages(taskOrId) {
   }
   const task = typeof taskOrId === 'object' ? taskOrId : loadTasks().find(t => t.id == id);
   if (task && task.type === 'dual') {
-    for (let i = 0; i < (task.frontCount || 0); i++) { try { await authFetch(`/api/images/${id}/f${i}`, { method: 'DELETE' }); } catch {} }
-    for (let i = 0; i < (task.backCount || 0); i++) { try { await authFetch(`/api/images/${id}/b${i}`, { method: 'DELETE' }); } catch {} }
+    for (let i = 0; i < (task.frontCount || 0); i++) { try { await authFetch(apiUrl(`/api/images/${id}/f${i}`), { method: 'DELETE' }); } catch {} }
+    for (let i = 0; i < (task.backCount || 0); i++) { try { await authFetch(apiUrl(`/api/images/${id}/b${i}`), { method: 'DELETE' }); } catch {} }
   } else {
-    try { await authFetch(`/api/images/${id}/orig`, { method: 'DELETE' }); } catch {}
+    try { await authFetch(apiUrl(`/api/images/${id}/orig`), { method: 'DELETE' }); } catch {}
   }
 }
 
@@ -883,7 +885,7 @@ async function uploadFailedImage(taskId, suffix) {
   const dataUrl = window._imageMemCache[key];
   if (!dataUrl) return;
   try {
-    await authFetch(`/api/images/${taskId}/${suffix || 'orig'}`, {
+    await authFetch(apiUrl(`/api/images/${taskId}/${suffix || 'orig'}`), {
       method: 'POST', body: JSON.stringify({ data: dataUrl }),
     });
   } catch (e) { console.error('[image upload]', e.message); }
@@ -891,7 +893,7 @@ async function uploadFailedImage(taskId, suffix) {
 
 async function clearSuccessImage(taskId) {
   delete window._imageMemCache[String(taskId)];
-  try { await authFetch(`/api/images/${taskId}/orig`, { method: 'DELETE' }); } catch {}
+  try { await authFetch(apiUrl(`/api/images/${taskId}/orig`), { method: 'DELETE' }); } catch {}
 }
 
 function evictOldImages() { /* server handles cleanup */ }
@@ -1727,7 +1729,7 @@ async function startFeishuLogin() {
   const btn = document.getElementById('loginBtn');
   if (btn) { btn.disabled = true; btn.textContent = '正在跳转...'; }
   try {
-    const resp = await fetch('/api/internal/oauth-config');
+    const resp = await fetch(apiUrl('/api/internal/oauth-config'));
     const data = await resp.json();
     const appId = data.app_id;
     if (!appId) throw new Error('服务端未配置 APP_ID');
@@ -1757,7 +1759,7 @@ async function handleOAuthCallback() {
 
   try {
     const redirectUri = location.origin + location.pathname;
-    const resp = await fetch('/api/internal/oauth-token', {
+    const resp = await fetch(apiUrl('/api/internal/oauth-token'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }),
@@ -1790,7 +1792,7 @@ async function refreshAccessToken() {
   if (oauth.refresh_expire_at && now > oauth.refresh_expire_at) return false;
 
   try {
-    const resp = await fetch('/api/internal/oauth-token', {
+    const resp = await fetch(apiUrl('/api/internal/oauth-token'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: oauth.refresh_token }),
@@ -1839,7 +1841,7 @@ async function fetchAndDisplayUser() {
   const oauth = getOAuth();
   if (!oauth) return;
   try {
-    const resp = await fetch('/api/feishu/authen/v1/user_info', {
+    const resp = await fetch(apiUrl('/api/feishu/authen/v1/user_info'), {
       headers: { 'Authorization': 'Bearer ' + oauth.access_token },
     });
     const data = await resp.json();
@@ -1871,7 +1873,7 @@ function logout() {
 async function initAuth() {
   // 0. 获取服务端环境配置
   try {
-    const cfgResp = await fetch('/api/internal/oauth-config');
+    const cfgResp = await fetch(apiUrl('/api/internal/oauth-config'));
     const cfgData = await cfgResp.json();
     if (cfgData.env) appEnv = cfgData.env;
   } catch (e) { console.warn('Failed to fetch app config:', e); }
